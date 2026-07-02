@@ -9,6 +9,13 @@ suppressPackageStartupMessages({
 source("R/gtfs_pipeline.R")
 source("R/tdm_pipeline.R")
 
+# WFRC's brand.yml lives inside a git submodule (a Quarto-extension layout,
+# not a root-level _brand.yml, so bslib's auto-discovery won't find it --
+# point bs_theme() at it explicitly instead). Logo assets are served without
+# copying them into www/ via addResourcePath().
+brand_yml_path <- "_brand/_extensions/wfrc-brand/brand.yml"
+addResourcePath("brand", "_brand/_extensions/wfrc-brand/assets")
+
 gtfs_raw_dir <- "_data/gtfs"
 tdm_gdb_path <- "_data/tdm/WFv1000_MasterNet_20260430.gdb.zip"
 
@@ -52,7 +59,10 @@ tdm_routes_sf$tdm_year <- parse_tdm_year(tdm_routes_sf$tdm_group)
 tdm_stops_sf$tdm_mode <- parse_tdm_mode(tdm_stops_sf$tdm_group)
 tdm_stops_sf$tdm_year <- parse_tdm_year(tdm_stops_sf$tdm_group)
 
-tdm_mode_colors <- c(rail = "#E6194B", brt = "#3CB44B", core = "#4363D8")
+# WFRC's own Wasatch Choice transit colors (wc-light-rail/wc-brt); "core"
+# (local bus) has no official swatch yet since that network isn't in the TDM
+# data, so it borrows a distinct purple from their broader Core Palette.
+tdm_mode_colors <- c(rail = "#3762ad", brt = "#24949a", core = "#553c8f")
 default_tdm_mode_color <- "#808080"
 tdm_routes_sf$tdm_color <- unname(ifelse(
   tdm_routes_sf$tdm_mode %in% names(tdm_mode_colors),
@@ -216,14 +226,31 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
 }
 
 ui <- page_navbar(
-  title = "WFRC TDM vs GTFS",
+  title = tagList(
+    img(src = "brand/logo/horizontal/WFRC_logo_horizontal_white_transparent.png",
+        height = "28px", alt = "WFRC logo", class = "me-2"),
+    "TDM vs GTFS"
+  ),
+  theme = bs_theme(brand = brand_yml_path) |>
+    bs_add_rules(".card { border-radius: .75rem; }"),
+  window_title = "WFRC TDM vs GTFS",
+  tags$head(
+    tags$link(rel = "icon", type = "image/png",
+              href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png")
+  ),
+  busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5"),
   nav_panel(
     title = "Map",
-    card(full_screen = TRUE, uiOutput("map_container"))
+    card(
+      full_screen = TRUE,
+      card_header(textOutput("comparison_summary", inline = TRUE)),
+      uiOutput("map_container")
+    )
   ),
   nav_spacer(),
+  nav_item(input_dark_mode()),
   nav_item(actionButton("open_settings", label = "Configure", icon = icon("gear"),
-                         class = "btn-link"))
+                         class = "btn-outline-light"))
 )
 
 server <- function(input, output, session) {
@@ -247,14 +274,15 @@ server <- function(input, output, session) {
       footer = modalButton("Close"),
       div(
         class = "d-flex align-items-center gap-2 mb-3",
+        icon("shuffle"),
         strong("Comparison mode"),
         uiOutput("compare_mode_control", inline = TRUE)
       ),
       layout_columns(
         col_widths = c(6, 6),
-        div(
-          strong("GTFS"),
-          checkboxInput("gtfs_enabled", "Enable GTFS", value = val("gtfs_enabled", TRUE)),
+        card(
+          card_header(icon("bus"), "GTFS"),
+          input_switch("gtfs_enabled", "Enable GTFS", value = val("gtfs_enabled", TRUE)),
           radioButtons("gtfs_source", "Source",
                        choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
                        selected = val("gtfs_source", "snapshot")),
@@ -273,33 +301,68 @@ server <- function(input, output, session) {
                       placeholder = "https://.../gtfs.zip"),
             actionButton("gtfs_url_load", "Load feed")
           ),
-          checkboxGroupInput("gtfs_display", "Show", choices = lines_stops_choices,
-                              selected = val("gtfs_display", c("lines", "stops")), inline = TRUE)
+          div(
+            class = "d-flex align-items-center gap-1",
+            checkboxGroupInput("gtfs_display", "Show", choices = lines_stops_choices,
+                                selected = val("gtfs_display", c("lines", "stops")), inline = TRUE),
+            tooltip(
+              icon("circle-info"),
+              "Every GTFS route shape is drawn individually. Stops are colored by",
+              "their primary route, cluster below zoom 10 in overlay mode, and",
+              "show name labels on zoom-in."
+            )
+          )
         ),
-        div(
-          strong("TDM"),
-          checkboxInput("tdm_enabled", "Enable TDM", value = val("tdm_enabled", TRUE)),
+        card(
+          card_header(icon("map"), "TDM"),
+          input_switch("tdm_enabled", "Enable TDM", value = val("tdm_enabled", TRUE)),
           selectInput("tdm_year", "Year", choices = all_tdm_years,
                       selected = val("tdm_year", default_tdm_year)),
           selectInput("tdm_modes", "Lines", choices = all_tdm_modes,
                       selected = val("tdm_modes", all_tdm_modes), multiple = TRUE),
-          checkboxGroupInput("tdm_display", "Show", choices = lines_stops_choices,
-                              selected = val("tdm_display", c("lines", "stops")), inline = TRUE)
+          div(
+            class = "d-flex align-items-center gap-1",
+            checkboxGroupInput("tdm_display", "Show", choices = lines_stops_choices,
+                                selected = val("tdm_display", c("lines", "stops")), inline = TRUE),
+            tooltip(
+              icon("circle-info"),
+              "Dashed lines colored by line type (rail/BRT/core), so the model",
+              "network reads clearly regardless of nearby GTFS route colors."
+            )
+          )
         )
       ),
-      hr(),
-      selectInput("basemap", "Basemap",
-                  choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
-                  selected = val("basemap", "positron")),
-      helpText("GTFS: every route shape drawn individually; stops colored by",
-               "primary route, clustered below zoom 10 (overlay mode only),",
-               "with labels appearing on zoom-in.",
-               "TDM: dashed lines colored by line type (rail/BRT/core).")
+      div(
+        class = "mt-3",
+        selectInput("basemap", "Basemap",
+                    choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
+                    selected = val("basemap", "positron"))
+      )
     )
   }
 
   showModal(isolate(settings_modal()))
   observeEvent(input$open_settings, showModal(settings_modal()))
+
+  output$comparison_summary <- renderText({
+    gtfs_part <- if (!isTRUE(input$gtfs_enabled)) {
+      "GTFS off"
+    } else {
+      switch(input$gtfs_source %||% "snapshot",
+        snapshot = paste("GTFS", input$gtfs_date %||% ""),
+        upload = "GTFS (uploaded feed)",
+        url = "GTFS (feed URL)",
+        "GTFS"
+      )
+    }
+    tdm_part <- if (!isTRUE(input$tdm_enabled)) {
+      "TDM off"
+    } else {
+      paste0("TDM ", input$tdm_year %||% "",
+             " (", paste(input$tdm_modes %||% character(0), collapse = ", "), ")")
+    }
+    paste(gtfs_part, "·", tdm_part)
+  })
 
   # Rendered as its own output (not inlined in settings_modal()) so it can
   # live-update -- grey out and lock as soon as GTFS or TDM gets disabled,

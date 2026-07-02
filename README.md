@@ -16,9 +16,34 @@ Comparison here is **visual validation**, not automated route matching: the TDM 
 - `_data/gtfs/` — GTFS snapshots (original, unmodified zip downloads), one per feed publication date. This is the only GTFS data committed to the repo — no derived/processed copies.
 - `_data/tdm/` — TDM transit network:
   - `WFv1000_MasterNet_20260430.gdb.zip` — the model's zipped file geodatabase (read via GDAL's `/vsizip/`), currently a **placeholder subset**: only `rail_2023` (5 lines) and `wfrc_brt_2023` (1 line) transit groups exist for the 2023 base year (local bus, expected: hundreds of routes, hasn't been added yet). The gdb also has 2055 forecast-scenario groups (`rail_2055UF`, `wfrc_brt_2055UF`, `wfrc_core_2055UF`); the app defaults to 2023 only since comparing a forecast scenario against present-day GTFS isn't meaningful, but the forecast groups stay selectable. This is the only TDM data committed to the repo — no derived/processed copies (TDM upload support, mirroring GTFS's, is planned but not yet implemented).
+- `_brand/` — **git submodule** → [`WFRCAnalytics/wfrc-brand`](https://github.com/WFRCAnalytics/wfrc-brand), WFRC's official brand.yml (colors, fonts, logos). `app.R` points `bs_theme(brand = ...)` directly at `_brand/_extensions/wfrc-brand/brand.yml` (that repo is a Quarto-extension layout, not a root-level `_brand.yml`, so bslib's auto-discovery won't find it on its own) and serves the logo PNGs via `addResourcePath()` without copying them. See **Setup** below — this directory is empty until the submodule is initialized.
 - `gtfs-vs-tdm.qgz` — earlier QGIS project; superseded by the Shiny app above (kept for reference).
 
 Current GTFS snapshots: 2023-07-23, 2023-09-18, 2024-03-25, 2024-07-15, 2024-11-21, 2025-02-27.
+
+## Setup
+
+This repo uses a **git submodule** for WFRC's brand assets (`_brand/`), so clone with:
+
+```
+git clone --recurse-submodules <repo-url>
+```
+
+If you already have a clone without it, initialize the submodule separately:
+
+```
+git submodule update --init --recursive
+```
+
+`_brand/` is otherwise an empty directory and the app's theming/logo will fail to load without this step. To pull in a brand update later (the upstream `wfrc-brand` repo is still evolving), pull the new commit deliberately rather than auto-following it:
+
+```
+git submodule update --remote _brand
+git diff _brand   # review what changed before committing
+git add _brand && git commit -m "Update wfrc-brand submodule"
+```
+
+If deploying this app (Posit Connect, shinyapps.io, etc.), make sure the submodule is initialized in whatever environment runs the deploy — deployment tooling bundles whatever files are actually present on disk, and won't fetch an uninitialized submodule for you.
 
 ## Workflow
 
@@ -29,4 +54,5 @@ Current GTFS snapshots: 2023-07-23, 2023-09-18, 2024-03-25, 2024-07-15, 2024-11-
 ## Requirements
 
 - R with [renv](https://rstudio.github.io/renv/) — run `renv::restore()` to install the pinned package versions from `renv.lock` (`sf`, `tidytransit`, `mapgl`, `shiny`, `dplyr`, `bslib`).
+- The `_brand/` git submodule initialized — see **Setup** above.
 - [QGIS](https://qgis.org/) only if opening the legacy `gtfs-vs-tdm.qgz` project.
