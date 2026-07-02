@@ -6,31 +6,27 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
-gtfs_root <- "_data/gtfs"
+source("R/gtfs_pipeline.R")
+
+gtfs_raw_dir <- "_data/gtfs/raw"
 tdm_routes_path <- "_data/tdm/tdm_routes.geojson"
 tdm_stops_path <- "_data/tdm/tdm_stops.geojson"
 
-available_dates <- sort(
-  setdiff(list.dirs(gtfs_root, full.names = FALSE, recursive = FALSE), "raw"),
-  decreasing = TRUE
-)
-
-read_gtfs_routes <- function(date) {
-  st_read(file.path(gtfs_root, date, "routes_shapes.geojson"), quiet = TRUE)
-}
-read_gtfs_stops <- function(date) {
-  st_read(file.path(gtfs_root, date, "stops.geojson"), quiet = TRUE)
-}
+gtfs_raw_zips <- list.files(gtfs_raw_dir, pattern = "\\.zip$", full.names = TRUE)
+names(gtfs_raw_zips) <- vapply(gtfs_raw_zips, function(f) extract_date(basename(f)), character(1))
+available_dates <- sort(names(gtfs_raw_zips), decreasing = TRUE)
 
 # Loaded once, non-reactively, to build each map exactly one time. Every
 # subsequent update goes through a proxy so the current pan/zoom is preserved
 # instead of the map re-rendering (and re-zooming to bounds) on every control
 # change. Switching comparison mode (overlay/swipe) is the one action that
 # rebuilds its target map fresh, since that's a structural UI change, not a
-# simple filter toggle.
+# simple filter toggle. GTFS is processed live from the raw zip every time
+# (snapshot, upload, or feed URL alike -- one pipeline, no pre-baked cache).
 initial_date <- available_dates[1]
-initial_gtfs_routes_sf <- read_gtfs_routes(initial_date)
-initial_gtfs_stops_sf <- read_gtfs_stops(initial_date)
+initial_gtfs <- build_gtfs_layers(gtfs_raw_zips[[initial_date]])
+initial_gtfs_routes_sf <- initial_gtfs$routes_shapes_sf
+initial_gtfs_stops_sf <- initial_gtfs$stops_sf
 
 tdm_routes_sf <- st_read(tdm_routes_path, quiet = TRUE)
 tdm_stops_sf <- st_read(tdm_stops_path, quiet = TRUE)
@@ -220,54 +216,150 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
 
 ui <- page_navbar(
   title = "WFRC TDM vs GTFS",
-  sidebar = sidebar(
-    width = 260,
-    strong("GTFS"),
-    selectInput("gtfs_date", "Snapshot", choices = available_dates, selected = initial_date),
-    checkboxGroupInput("gtfs_display", "Show", choices = lines_stops_choices,
-                        selected = c("lines", "stops"), inline = TRUE),
-    checkboxInput("show_stop_labels", "Stop labels (zoom in)", value = TRUE),
-    hr(),
-    strong("TDM"),
-    selectInput("tdm_year", "Year", choices = all_tdm_years, selected = default_tdm_year),
-    selectInput("tdm_modes", "Lines", choices = all_tdm_modes, selected = all_tdm_modes, multiple = TRUE),
-    checkboxGroupInput("tdm_display", "Show", choices = lines_stops_choices,
-                        selected = c("lines", "stops"), inline = TRUE),
-    hr(),
-    selectInput("basemap", "Basemap",
-                choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
-                selected = "positron"),
-    helpText("GTFS: every shape_id drawn individually (GTFSx-style); stops",
-             "colored by primary route, clustered below zoom 10.",
-             "TDM: dashed lines colored by line type (rail/BRT/core).")
-  ),
   nav_panel(
     title = "Map",
     card(full_screen = TRUE, uiOutput("map_container"))
   ),
   nav_spacer(),
-  nav_item(
-    div(
-      class = "d-flex align-items-center gap-2 px-2",
-      span("Overlay", class = "small text-muted"),
-      input_switch("compare_swipe", NULL, value = FALSE),
-      span("Swipe", class = "small text-muted")
-    )
-  )
+  nav_item(actionButton("open_settings", label = "Configure", icon = icon("gear"),
+                         class = "btn-link"))
 )
 
 server <- function(input, output, session) {
 
-  compare_mode <- reactive(if (isTRUE(input$compare_swipe)) "swipe" else "overlay")
+  both_enabled <- reactive(isTRUE(input$gtfs_enabled) && isTRUE(input$tdm_enabled))
+  # Swipe only makes sense when both datasets are on -- force overlay
+  # whenever one is disabled, regardless of the switch's last position.
+  compare_mode <- reactive(if (both_enabled() && isTRUE(input$compare_swipe)) "swipe" else "overlay")
 
-  gtfs_routes_sf <- reactive({
-    req(input$gtfs_date)
-    read_gtfs_routes(input$gtfs_date)
+  # Reopening the settings modal re-renders these inputs from scratch, so
+  # each one's initial value has to come from the current input (falling
+  # back to a default only the first time) or it would silently reset on
+  # every reopen.
+  val <- function(id, default) if (is.null(input[[id]])) default else input[[id]]
+
+  settings_modal <- function() {
+    modalDialog(
+      title = "Configure comparison",
+      size = "l",
+      easyClose = TRUE,
+      footer = modalButton("Close"),
+      div(
+        class = "d-flex align-items-center gap-2 mb-3",
+        strong("Comparison mode"),
+        uiOutput("compare_mode_control", inline = TRUE)
+      ),
+      layout_columns(
+        col_widths = c(6, 6),
+        div(
+          strong("GTFS"),
+          checkboxInput("gtfs_enabled", "Enable GTFS", value = val("gtfs_enabled", TRUE)),
+          radioButtons("gtfs_source", "Source",
+                       choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
+                       selected = val("gtfs_source", "snapshot")),
+          conditionalPanel(
+            "input.gtfs_source == 'snapshot'",
+            selectInput("gtfs_date", "Snapshot", choices = available_dates,
+                        selected = val("gtfs_date", initial_date))
+          ),
+          conditionalPanel(
+            "input.gtfs_source == 'upload'",
+            fileInput("gtfs_upload", "GTFS zip file", accept = ".zip")
+          ),
+          conditionalPanel(
+            "input.gtfs_source == 'url'",
+            textInput("gtfs_url", "Feed URL", value = val("gtfs_url", ""),
+                      placeholder = "https://.../gtfs.zip"),
+            actionButton("gtfs_url_load", "Load feed")
+          ),
+          checkboxGroupInput("gtfs_display", "Show", choices = lines_stops_choices,
+                              selected = val("gtfs_display", c("lines", "stops")), inline = TRUE)
+        ),
+        div(
+          strong("TDM"),
+          checkboxInput("tdm_enabled", "Enable TDM", value = val("tdm_enabled", TRUE)),
+          selectInput("tdm_year", "Year", choices = all_tdm_years,
+                      selected = val("tdm_year", default_tdm_year)),
+          selectInput("tdm_modes", "Lines", choices = all_tdm_modes,
+                      selected = val("tdm_modes", all_tdm_modes), multiple = TRUE),
+          checkboxGroupInput("tdm_display", "Show", choices = lines_stops_choices,
+                              selected = val("tdm_display", c("lines", "stops")), inline = TRUE)
+        )
+      ),
+      hr(),
+      selectInput("basemap", "Basemap",
+                  choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
+                  selected = val("basemap", "positron")),
+      helpText("GTFS: every route shape drawn individually; stops colored by",
+               "primary route, clustered below zoom 10 (overlay mode only),",
+               "with labels appearing on zoom-in.",
+               "TDM: dashed lines colored by line type (rail/BRT/core).")
+    )
+  }
+
+  showModal(isolate(settings_modal()))
+  observeEvent(input$open_settings, showModal(settings_modal()))
+
+  # Rendered as its own output (not inlined in settings_modal()) so it can
+  # live-update -- grey out and lock as soon as GTFS or TDM gets disabled,
+  # without needing to close and reopen the modal.
+  output$compare_mode_control <- renderUI({
+    div(
+      class = "d-flex align-items-center gap-2",
+      style = if (!both_enabled()) "opacity: 0.4; pointer-events: none;" else NULL,
+      span("Overlay", class = "small text-muted"),
+      input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe)),
+      span("Swipe", class = "small text-muted")
+    )
   })
-  gtfs_stops_sf <- reactive({
+
+  gtfs_snapshot_data <- reactive({
     req(input$gtfs_date)
-    read_gtfs_stops(input$gtfs_date)
+    tryCatch(
+      build_gtfs_layers(gtfs_raw_zips[[input$gtfs_date]]),
+      error = function(e) {
+        showNotification(paste("Could not process GTFS snapshot:", conditionMessage(e)),
+                          type = "error", duration = 8)
+        NULL
+      }
+    )
   })
+
+  gtfs_upload_data <- reactive({
+    req(input$gtfs_upload)
+    tryCatch(
+      build_gtfs_layers(input$gtfs_upload$datapath),
+      error = function(e) {
+        showNotification(paste("Could not process uploaded GTFS file:", conditionMessage(e)),
+                          type = "error", duration = 8)
+        NULL
+      }
+    )
+  })
+
+  gtfs_url_data <- eventReactive(input$gtfs_url_load, {
+    req(input$gtfs_url)
+    tmp <- tempfile(fileext = ".zip")
+    tryCatch({
+      download.file(input$gtfs_url, tmp, mode = "wb", quiet = TRUE)
+      build_gtfs_layers(tmp)
+    }, error = function(e) {
+      showNotification(paste("Could not load GTFS feed:", conditionMessage(e)),
+                        type = "error", duration = 8)
+      NULL
+    })
+  })
+
+  gtfs_data <- reactive({
+    switch(req(input$gtfs_source),
+      snapshot = gtfs_snapshot_data(),
+      upload = gtfs_upload_data(),
+      url = gtfs_url_data()
+    )
+  })
+
+  gtfs_routes_sf <- reactive({ req(gtfs_data()); gtfs_data()$routes_shapes_sf })
+  gtfs_stops_sf <- reactive({ req(gtfs_data()); gtfs_data()$stops_sf })
 
   tdm_group_names <- reactive({
     req(input$tdm_year, input$tdm_modes)
@@ -284,13 +376,21 @@ server <- function(input, output, session) {
     if (length(groups) == 0) tdm_stops_sf[0, ] else filter(tdm_stops_sf, tdm_group %in% groups)
   })
 
-  gtfs_lines_vis <- reactive(if ("lines" %in% input$gtfs_display) "visible" else "none")
-  gtfs_stops_vis <- reactive(if ("stops" %in% input$gtfs_display) "visible" else "none")
-  gtfs_labels_vis <- reactive({
-    if ("stops" %in% input$gtfs_display && isTRUE(input$show_stop_labels)) "visible" else "none"
+  gtfs_lines_vis <- reactive({
+    if (isTRUE(input$gtfs_enabled) && "lines" %in% input$gtfs_display) "visible" else "none"
   })
-  tdm_lines_vis <- reactive(if ("lines" %in% input$tdm_display) "visible" else "none")
-  tdm_stops_vis <- reactive(if ("stops" %in% input$tdm_display) "visible" else "none")
+  gtfs_stops_vis <- reactive({
+    if (isTRUE(input$gtfs_enabled) && "stops" %in% input$gtfs_display) "visible" else "none"
+  })
+  # Labels always follow stop visibility; zoom-gating (min_zoom on the
+  # symbol layer) handles when they actually appear, no separate toggle.
+  gtfs_labels_vis <- gtfs_stops_vis
+  tdm_lines_vis <- reactive({
+    if (isTRUE(input$tdm_enabled) && "lines" %in% input$tdm_display) "visible" else "none"
+  })
+  tdm_stops_vis <- reactive({
+    if (isTRUE(input$tdm_enabled) && "stops" %in% input$tdm_display) "visible" else "none"
+  })
 
   # Resolves to whichever proxy currently targets the visible widget: the
   # single overlay map, or the relevant side of the swipe compare widget.
@@ -353,7 +453,7 @@ server <- function(input, output, session) {
     tdm_proxy() |> set_source(layer_id = "tdm_stops", source = tdm_stops_filtered())
   }, ignoreInit = TRUE)
 
-  observeEvent(list(input$gtfs_display, input$show_stop_labels), {
+  observeEvent(list(input$gtfs_display, input$gtfs_enabled), {
     p <- gtfs_proxy() |>
       set_layout_property("gtfs_routes", "visibility", gtfs_lines_vis()) |>
       set_layout_property("gtfs_stops", "visibility", gtfs_stops_vis()) |>
@@ -367,7 +467,7 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
-  observeEvent(input$tdm_display, {
+  observeEvent(list(input$tdm_display, input$tdm_enabled), {
     p <- tdm_proxy() |>
       set_layout_property("tdm_routes", "visibility", tdm_lines_vis()) |>
       set_layout_property("tdm_stops", "visibility", tdm_stops_vis())

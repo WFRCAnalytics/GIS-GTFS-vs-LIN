@@ -1,17 +1,13 @@
-# Extracts GTFS route/shape/stop geometry directly from the raw GTFS zips in
-# _data/gtfs/raw/, replacing the lossy output of QGIS's GTFS2GIS plugin
-# (which dissolves routes and drops route_color/route_type/shape_id).
-#
-# Run from the repo root: Rscript R/prepare_gtfs.R
+# Shared GTFS extraction pipeline used by app.R for every GTFS source --
+# saved snapshots (read live from _data/gtfs/raw/), user uploads, and feed
+# URLs -- so there's exactly one extraction code path, not a pre-baked one
+# for snapshots and a separate live one for everything else.
 
 suppressPackageStartupMessages({
   library(tidytransit)
   library(sf)
   library(dplyr)
 })
-
-raw_dir <- "_data/gtfs/raw"
-out_root <- "_data/gtfs"
 
 extract_date <- function(filename) {
   m <- regmatches(filename, regexpr("[0-9]{8}", filename))
@@ -51,11 +47,10 @@ normalize_color <- function(x, default) {
   ifelse(is.na(x) | x == "", paste0("#", default), paste0("#", x))
 }
 
-process_feed <- function(zip_path, date) {
-  message("Processing ", date, " (", basename(zip_path), ")")
-  out_dir <- file.path(out_root, date)
-  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-
+# Returns list(routes_shapes_sf = ..., stops_sf = ...) built from a raw GTFS
+# zip, regardless of its internal layout (flatten_gtfs_zip() normalizes it
+# first) or where it came from (local file, upload, or downloaded feed URL).
+build_gtfs_layers <- function(zip_path) {
   gtfs <- read_gtfs(flatten_gtfs_zip(zip_path))
 
   routes <- gtfs$routes %>%
@@ -101,18 +96,5 @@ process_feed <- function(zip_path, date) {
     mutate(stop_color = ifelse(is.na(stop_color), "#8B7E74", stop_color)) %>%
     select(stop_id, stop_name, route_ids, stop_color)
 
-  for (stale in c("routes.geojson", "routes_dissolved.geojson")) {
-    stale_path <- file.path(out_dir, stale)
-    if (file.exists(stale_path)) file.remove(stale_path)
-  }
-
-  st_write(routes_shapes_sf, file.path(out_dir, "routes_shapes.geojson"),
-           delete_dsn = TRUE, quiet = TRUE)
-  st_write(stops_sf, file.path(out_dir, "stops.geojson"),
-           delete_dsn = TRUE, quiet = TRUE)
-}
-
-zip_files <- list.files(raw_dir, pattern = "\\.zip$", full.names = TRUE)
-for (zip_path in zip_files) {
-  process_feed(zip_path, extract_date(basename(zip_path)))
+  list(routes_shapes_sf = routes_shapes_sf, stops_sf = stops_sf)
 }
