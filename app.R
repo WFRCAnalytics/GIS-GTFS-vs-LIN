@@ -98,6 +98,7 @@ default_tdm_year <- if ("2023" %in% all_tdm_years) "2023" else all_tdm_years[1]
 all_tdm_modes <- intersect(c("brt", "rail", "core"), unique(tdm_routes_sf$tdm_mode))
 
 lines_stops_choices <- c("Lines" = "lines", "Stops" = "stops")
+muted_label <- function(text) span(text, class = "small text-muted")
 
 # Shared by GTFS and TDM stop circles so both sides render at the same size.
 stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14, 6)
@@ -252,7 +253,21 @@ ui <- page_navbar(
     "TDM vs GTFS"
   ),
   theme = bs_theme(brand = brand_data) |>
-    bs_add_rules(".card { border-radius: .75rem; }"),
+    bs_add_rules(c(
+      ".card { border-radius: .75rem; }",
+      # mapgl's add_legend() and MapLibre's own controls (attribution, zoom,
+      # fullscreen) ship a hardcoded Helvetica Neue/Arial stack, completely
+      # disconnected from the brand font -- confirmed via the actual rendered
+      # DOM (.mapboxgl-legend / .mapgl-legend-title / .maplibregl-ctrl), not
+      # guessed. !important is needed to beat their inline-level specificity.
+      ".mapboxgl-legend, .maplibregl-ctrl, .maplibregl-ctrl-attrib {",
+      "  font-family: 'Poppins', sans-serif !important;",
+      "}",
+      ".mapgl-legend-title {",
+      "  font-family: 'Inter', sans-serif !important;",
+      "  color: #023c5b !important;",
+      "}"
+    )),
   window_title = "WFRC TDM vs GTFS",
   header = tagList(
     tags$head(
@@ -261,12 +276,66 @@ ui <- page_navbar(
     ),
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
+  sidebar = sidebar(
+    width = 280,
+    div(
+      class = "d-flex align-items-center gap-2 mb-1",
+      icon("shuffle"), strong("Comparison mode")
+    ),
+    div(class = "mb-3", uiOutput("compare_mode_control", inline = TRUE)),
+    hr(class = "my-2"),
+    div(class = "d-flex align-items-center gap-2 mb-2", icon("bus"), strong("GTFS")),
+    input_switch("gtfs_enabled", "Enable", value = TRUE),
+    radioButtons("gtfs_source", muted_label("Source"),
+                 choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
+                 selected = "snapshot"),
+    conditionalPanel(
+      "input.gtfs_source == 'snapshot'",
+      selectInput("gtfs_date", muted_label("Snapshot"),
+                  choices = available_dates, selected = initial_date)
+    ),
+    conditionalPanel(
+      "input.gtfs_source != 'snapshot'",
+      p(class = "small text-muted", "Configure via the gear icon above.")
+    ),
+    div(
+      class = "d-flex align-items-center gap-1",
+      checkboxGroupInput("gtfs_display", muted_label("Show"), choices = lines_stops_choices,
+                          selected = c("lines", "stops"), inline = TRUE),
+      tooltip(
+        icon("circle-info"),
+        "Every GTFS route shape is drawn individually. Stops are colored by",
+        "their primary route, cluster below zoom 10 in overlay mode, and",
+        "show name labels on zoom-in."
+      )
+    ),
+    hr(class = "my-2"),
+    div(class = "d-flex align-items-center gap-2 mb-2", icon("map"), strong("TDM")),
+    input_switch("tdm_enabled", "Enable", value = TRUE),
+    selectInput("tdm_year", muted_label("Year"), choices = all_tdm_years, selected = default_tdm_year),
+    selectInput("tdm_modes", muted_label("Lines"), choices = all_tdm_modes,
+                selected = all_tdm_modes, multiple = TRUE),
+    div(
+      class = "d-flex align-items-center gap-1",
+      checkboxGroupInput("tdm_display", muted_label("Show"), choices = lines_stops_choices,
+                          selected = c("lines", "stops"), inline = TRUE),
+      tooltip(
+        icon("circle-info"),
+        "Dashed lines colored by line type (rail/BRT/core), so the model",
+        "network reads clearly regardless of nearby GTFS route colors."
+      )
+    )
+  ),
   nav_panel(
     title = "Map",
-    card(
-      full_screen = TRUE,
-      card_header(textOutput("comparison_summary", inline = TRUE)),
-      uiOutput("map_container")
+    div(
+      style = "position: relative; height: 100%;",
+      uiOutput("map_container"),
+      div(
+        class = "position-absolute top-0 start-0 m-3 px-3 py-2 bg-body rounded shadow-sm",
+        style = "z-index: 10;",
+        textOutput("comparison_summary", inline = TRUE)
+      )
     )
   ),
   nav_spacer(),
@@ -285,85 +354,36 @@ server <- function(input, output, session) {
   # Reopening the settings modal re-renders these inputs from scratch, so
   # each one's initial value has to come from the current input (falling
   # back to a default only the first time) or it would silently reset on
-  # every reopen.
+  # every reopen. Only gtfs_url/basemap still live in the modal -- everything
+  # else moved to the always-present sidebar, which doesn't need this.
   val <- function(id, default) if (is.null(input[[id]])) default else input[[id]]
 
   settings_modal <- function() {
     modalDialog(
-      title = "Configure comparison",
-      size = "l",
+      title = "Data source & basemap",
       easyClose = TRUE,
       footer = modalButton("Close"),
-      div(
-        class = "d-flex align-items-center gap-2 mb-3",
-        icon("shuffle"),
-        strong("Comparison mode"),
-        uiOutput("compare_mode_control", inline = TRUE)
+      conditionalPanel(
+        "input.gtfs_source == 'upload'",
+        fileInput("gtfs_upload", "GTFS zip file", accept = ".zip")
       ),
-      layout_columns(
-        col_widths = c(6, 6),
-        card(
-          card_header(icon("bus"), "GTFS"),
-          input_switch("gtfs_enabled", "Enable GTFS", value = val("gtfs_enabled", TRUE)),
-          radioButtons("gtfs_source", "Source",
-                       choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
-                       selected = val("gtfs_source", "snapshot")),
-          conditionalPanel(
-            "input.gtfs_source == 'snapshot'",
-            selectInput("gtfs_date", "Snapshot", choices = available_dates,
-                        selected = val("gtfs_date", initial_date))
-          ),
-          conditionalPanel(
-            "input.gtfs_source == 'upload'",
-            fileInput("gtfs_upload", "GTFS zip file", accept = ".zip")
-          ),
-          conditionalPanel(
-            "input.gtfs_source == 'url'",
-            textInput("gtfs_url", "Feed URL", value = val("gtfs_url", ""),
-                      placeholder = "https://.../gtfs.zip"),
-            actionButton("gtfs_url_load", "Load feed")
-          ),
-          div(
-            class = "d-flex align-items-center gap-1",
-            checkboxGroupInput("gtfs_display", "Show", choices = lines_stops_choices,
-                                selected = val("gtfs_display", c("lines", "stops")), inline = TRUE),
-            tooltip(
-              icon("circle-info"),
-              "Every GTFS route shape is drawn individually. Stops are colored by",
-              "their primary route, cluster below zoom 10 in overlay mode, and",
-              "show name labels on zoom-in."
-            )
-          )
-        ),
-        card(
-          card_header(icon("map"), "TDM"),
-          input_switch("tdm_enabled", "Enable TDM", value = val("tdm_enabled", TRUE)),
-          selectInput("tdm_year", "Year", choices = all_tdm_years,
-                      selected = val("tdm_year", default_tdm_year)),
-          selectInput("tdm_modes", "Lines", choices = all_tdm_modes,
-                      selected = val("tdm_modes", all_tdm_modes), multiple = TRUE),
-          div(
-            class = "d-flex align-items-center gap-1",
-            checkboxGroupInput("tdm_display", "Show", choices = lines_stops_choices,
-                                selected = val("tdm_display", c("lines", "stops")), inline = TRUE),
-            tooltip(
-              icon("circle-info"),
-              "Dashed lines colored by line type (rail/BRT/core), so the model",
-              "network reads clearly regardless of nearby GTFS route colors."
-            )
-          )
-        )
+      conditionalPanel(
+        "input.gtfs_source == 'url'",
+        textInput("gtfs_url", "Feed URL", value = val("gtfs_url", ""),
+                  placeholder = "https://.../gtfs.zip"),
+        actionButton("gtfs_url_load", "Load feed")
       ),
-      div(
-        class = "mt-3",
-        selectInput("basemap", "Basemap",
-                    choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
-                    selected = val("basemap", "positron"))
-      )
+      conditionalPanel(
+        "input.gtfs_source == 'snapshot'",
+        p(class = "text-muted small", "Using a saved GTFS snapshot -- pick the date from the sidebar.")
+      ),
+      hr(),
+      selectInput("basemap", "Basemap",
+                  choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
+                  selected = val("basemap", "positron"))
     )
   }
 
-  showModal(isolate(settings_modal()))
   observeEvent(input$open_settings, showModal(settings_modal()))
 
   output$comparison_summary <- renderText({
@@ -386,15 +406,18 @@ server <- function(input, output, session) {
     paste(gtfs_part, "·", tdm_part)
   })
 
-  # Rendered as its own output (not inlined in settings_modal()) so it can
-  # live-update -- grey out and lock as soon as GTFS or TDM gets disabled,
-  # without needing to close and reopen the modal.
+  # Rendered as its own output (not inlined in the sidebar) so it can
+  # live-update -- grey out and lock as soon as GTFS or TDM gets disabled.
+  # input_switch()'s wrapping .shiny-input-container defaults to width:100%,
+  # which as a flex child stretches to fill the row and strands the "Swipe"
+  # label at the far edge -- wrap it at width:auto to keep the three pieces
+  # (Overlay / switch / Swipe) tight together.
   output$compare_mode_control <- renderUI({
     div(
       class = "d-flex align-items-center gap-2",
       style = if (!both_enabled()) "opacity: 0.4; pointer-events: none;" else NULL,
       span("Overlay", class = "small text-muted"),
-      input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe)),
+      div(style = "width: auto;", input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe))),
       span("Swipe", class = "small text-muted")
     )
   })
@@ -447,6 +470,12 @@ server <- function(input, output, session) {
   gtfs_routes_sf <- reactive({ req(gtfs_data()); gtfs_data()$routes_shapes_sf })
   gtfs_stops_sf <- reactive({ req(gtfs_data()); gtfs_data()$stops_sf })
 
+  # basemap lives in the modal, which (unlike the sidebar) only renders once
+  # the user opens it -- the initial map build happens before that, so
+  # input$basemap can still be NULL at that point. Fall back to the same
+  # default the modal's own selectInput uses.
+  current_basemap <- reactive(input$basemap %||% "positron")
+
   tdm_group_names <- reactive({
     req(input$tdm_year, input$tdm_modes)
     unique(tdm_routes_sf$tdm_group[
@@ -497,7 +526,7 @@ server <- function(input, output, session) {
   output$map <- renderMaplibre({
     req(compare_mode() == "overlay")
     isolate({
-      maplibre(style = carto_style(input$basemap), bounds = initial_gtfs_routes_sf) |>
+      maplibre(style = carto_style(current_basemap()), bounds = initial_gtfs_routes_sf) |>
         add_tdm_layers(tdm_routes_filtered(), tdm_stops_filtered(),
                         lines_visibility = tdm_lines_vis(), stops_visibility = tdm_stops_vis()) |>
         add_gtfs_layers(gtfs_routes_sf(), gtfs_stops_sf(),
@@ -509,11 +538,11 @@ server <- function(input, output, session) {
   output$compare_map <- renderMaplibreCompare({
     req(compare_mode() == "swipe")
     isolate({
-      gtfs_map <- maplibre(style = carto_style(input$basemap), bounds = initial_gtfs_routes_sf) |>
+      gtfs_map <- maplibre(style = carto_style(current_basemap()), bounds = initial_gtfs_routes_sf) |>
         add_gtfs_layers(gtfs_routes_sf(), gtfs_stops_sf(),
                          lines_visibility = gtfs_lines_vis(), stops_visibility = gtfs_stops_vis(),
                          labels_visibility = gtfs_labels_vis(), cluster = FALSE)
-      tdm_map <- maplibre(style = carto_style(input$basemap), bounds = initial_gtfs_routes_sf) |>
+      tdm_map <- maplibre(style = carto_style(current_basemap()), bounds = initial_gtfs_routes_sf) |>
         add_tdm_layers(tdm_routes_filtered(), tdm_stops_filtered(),
                         lines_visibility = tdm_lines_vis(), stops_visibility = tdm_stops_vis(),
                         cluster = FALSE)
