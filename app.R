@@ -43,6 +43,15 @@ gtfs_raw_zips <- list.files(gtfs_raw_dir, pattern = "\\.zip$", full.names = TRUE
 names(gtfs_raw_zips) <- vapply(gtfs_raw_zips, function(f) extract_date(basename(f)), character(1))
 available_dates <- sort(names(gtfs_raw_zips), decreasing = TRUE)
 
+# Raw GTFS snapshot ids are yyyymmdd (e.g. "20250227"); render them as a
+# readable date for the snapshot picker and the map badge, while the control
+# value stays the raw id used to key into gtfs_raw_zips.
+fmt_snapshot <- function(d) {
+  if (is.null(d) || !grepl("^[0-9]{8}$", d)) return(d %||% "")
+  format(as.Date(d, "%Y%m%d"), "%b %e, %Y")
+}
+snapshot_choices <- setNames(available_dates, vapply(available_dates, fmt_snapshot, character(1)))
+
 # Loaded once, non-reactively, to build each map exactly one time. Every
 # subsequent update goes through a proxy so the current pan/zoom is preserved
 # instead of the map re-rendering (and re-zooming to bounds) on every control
@@ -98,21 +107,39 @@ default_tdm_year <- if ("2023" %in% all_tdm_years) "2023" else all_tdm_years[1]
 all_tdm_modes <- intersect(c("brt", "rail", "core"), unique(tdm_routes_sf$tdm_mode))
 
 lines_stops_choices <- c("Lines" = "lines", "Stops" = "stops")
-muted_label <- function(text) span(text, class = "small text-muted")
 
-# Section header used for the sidebar's three top-level groups: a small
-# tinted "icon tile" (colored background + matching icon color, GTFSx-style
-# category badge) followed by an uppercase, letter-spaced label -- gives the
-# section headers a visually distinct tier above the plain muted field
-# labels (Source/Show/Year/etc.), instead of everything being ad hoc bold
-# text at the same weight. Tints come straight from WFRC's own brand
-# palette (brand_data$color$palette), not any borrowed color.
+# A small uppercase field label (Source / Year / Show / ...). Deliberately a
+# neutral gray tier (see .field-label in www/custom.css), one step below the
+# section headers, so the sidebar has real hierarchy instead of every label
+# competing at the same brand-cyan weight.
+field_label <- function(text) span(text, class = "field-label")
+
+# Section header for the sidebar's top-level groups: a tinted "icon tile"
+# (colored background + matching icon, brand-palette category badge) + an
+# uppercase label, with an optional control (the dataset Enable switch)
+# parked at the right edge -- the switch-in-header pattern turns each dataset
+# into a self-contained module you flip on/off, and removes a whole redundant
+# "Enable" row per section. Tints come from WFRC's own brand palette
+# (brand_data$color$palette), not any borrowed color.
 section_tint <- brand_data$color$palette
-section_header <- function(icon_name, label, tint) {
-  div(class = "d-flex align-items-center gap-2 mb-2",
+section_header <- function(icon_name, label, tint, control = NULL) {
+  div(class = "section-head d-flex align-items-center gap-2",
     span(icon(icon_name), class = "section-tile",
          style = sprintf("background: %s26; color: %s;", tint, tint)),
-    span(label, class = "section-label")
+    span(label, class = "section-label"),
+    if (!is.null(control)) div(class = "hdr-switch", control)
+  )
+}
+
+# A labelled field block: uppercase field label (with optional inline info
+# tooltip) stacked above its control, on a consistent 12px rhythm.
+sb_field <- function(label, control, info = NULL) {
+  div(class = "sb-field",
+    div(class = "d-flex align-items-center gap-1",
+      field_label(label),
+      if (!is.null(info)) info
+    ),
+    control
   )
 }
 
@@ -268,157 +295,94 @@ ui <- page_navbar(
         height = "28px", alt = "WFRC logo", class = "me-2"),
     "TDM vs GTFS"
   ),
-  theme = bs_theme(brand = brand_data) |>
-    bs_add_rules(c(
-      ".card { border-radius: .75rem; }",
-      # mapgl's add_legend() and MapLibre's own controls (attribution, zoom,
-      # fullscreen) ship a hardcoded Helvetica Neue/Arial stack, completely
-      # disconnected from the brand font -- confirmed via the actual rendered
-      # DOM (.mapboxgl-legend / .mapgl-legend-title / .maplibregl-ctrl), not
-      # guessed. !important is needed to beat their inline-level specificity.
-      ".mapboxgl-legend, .maplibregl-ctrl, .maplibregl-ctrl-attrib {",
-      "  font-family: 'Poppins', sans-serif !important;",
-      "}",
-      ".mapgl-legend-title {",
-      "  font-family: 'Inter', sans-serif !important;",
-      "  color: #023c5b !important;",
-      "}",
-      # Round the MapLibre controls/popups/legend to the same corner radius
-      # as .card, so the map's own native chrome reads as part of the same
-      # design system instead of sitting there in its library-default shape.
-      # One shared shadow token, reused below for the floating summary badge.
-      ":root { --wfrc-shadow: 0 2px 10px rgba(2, 60, 91, .12); }",
-      ".maplibregl-ctrl-group {",
-      "  border-radius: 10px !important;",
-      "  overflow: hidden;",
-      "  box-shadow: var(--wfrc-shadow) !important;",
-      "}",
-      ".maplibregl-popup-content {",
-      "  border-radius: 10px !important;",
-      "  box-shadow: var(--wfrc-shadow) !important;",
-      "}",
-      ".mapboxgl-legend {",
-      "  border-radius: 10px !important;",
-      "  box-shadow: var(--wfrc-shadow) !important;",
-      "}",
-      # Section header icon tile + uppercase label (see section_header()).
-      ".section-tile {",
-      "  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;",
-      "  display: inline-flex; align-items: center; justify-content: center;",
-      "  font-size: .8rem;",
-      "}",
-      ".section-label {",
-      "  font-family: 'Inter', sans-serif; font-weight: 700; font-size: .75rem;",
-      "  text-transform: uppercase; letter-spacing: .06em;",
-      "  color: var(--bs-secondary-color);",
-      "}",
-      # Sidebar gets a faint tint so it reads as a distinct panel next to the
-      # edge-to-edge map, plus a slim brand-tinted scrollbar for when its
-      # content outgrows the viewport height.
-      ".bslib-sidebar-layout > .sidebar {",
-      "  background: rgba(82, 182, 213, .06);",
-      "}",
-      "[data-bs-theme='dark'] .bslib-sidebar-layout > .sidebar {",
-      "  background: rgba(0, 0, 0, .15);",
-      "}",
-      ".bslib-sidebar-layout > .sidebar::-webkit-scrollbar { width: 6px; }",
-      ".bslib-sidebar-layout > .sidebar::-webkit-scrollbar-thumb {",
-      "  background: #52b6d5; border-radius: 3px;",
-      "}",
-      # Segmented-pill restyle of the GTFS Source radio group: hide the
-      # native radio circles, turn the labels into a connected 3-segment
-      # button row (Shiny renders radioButtons(inline=FALSE) as stacked
-      # divs, so this is also a layout change, not just a skin).
-      "#gtfs_source .shiny-options-group {",
-      "  display: flex; gap: 0; border: 1px solid var(--bs-border-color);",
-      "  border-radius: 8px; overflow: hidden; width: fit-content;",
-      "}",
-      "#gtfs_source .radio { margin: 0; }",
-      # radioButtons() nests <input> *inside* <label> (not as a sibling), so
-      # the checked style has to target the label via :has() rather than a
-      # `+` sibling selector -- confirmed against Shiny's actual generated
-      # markup, not guessed.
-      "#gtfs_source .radio input[type='radio'] {",
-      "  position: absolute; opacity: 0; pointer-events: none;",
-      "}",
-      "#gtfs_source .radio label {",
-      "  margin: 0; padding: .3rem .65rem; font-size: .8125rem; cursor: pointer;",
-      "  border-right: 1px solid var(--bs-border-color);",
-      "}",
-      "#gtfs_source .radio:last-child label { border-right: none; }",
-      # var(--bs-emphasis-color), not a hardcoded navy, so the active
-      # segment's text stays legible in both light and dark mode (Bootstrap
-      # 5.3 flips this variable per-theme automatically).
-      "#gtfs_source .radio label:has(input[type='radio']:checked) {",
-      "  background: #52b6d526; color: var(--bs-emphasis-color); font-weight: 600;",
-      "}"
-    )),
+  # The whole design system now lives in www/custom.css (a more maintainable
+  # pattern than a giant embedded bs_add_rules() string). All of it is plain,
+  # theme-aware CSS -- no Sass compilation needed -- so a stylesheet link that
+  # loads after the bslib/brand-compiled Bootstrap is the right home for it.
+  theme = bs_theme(brand = brand_data),
   window_title = "WFRC TDM vs GTFS",
   header = tagList(
     tags$head(
       tags$link(rel = "icon", type = "image/png",
-                href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png")
+                href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png"),
+      tags$link(rel = "stylesheet", href = "custom.css")
     ),
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
   sidebar = sidebar(
-    width = 280,
-    section_header("shuffle", "Comparison mode", section_tint$`wfrc-yellow`),
-    div(class = "mb-3", uiOutput("compare_mode_control", inline = TRUE)),
-    hr(class = "my-2"),
-    section_header("bus", "GTFS", section_tint$`wfrc-secondary-blue`),
-    input_switch("gtfs_enabled", "Enable", value = TRUE),
-    radioButtons("gtfs_source", muted_label("Source"),
-                 choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
-                 selected = "snapshot"),
-    conditionalPanel(
-      "input.gtfs_source == 'snapshot'",
-      selectInput("gtfs_date", muted_label("Snapshot"),
-                  choices = available_dates, selected = initial_date)
+    width = 300,
+    class = "app-sidebar",
+    div(class = "sb-section",
+      section_header("shuffle", "Comparison", section_tint$`wfrc-yellow`),
+      uiOutput("compare_mode_control", inline = TRUE)
     ),
-    conditionalPanel(
-      "input.gtfs_source == 'upload'",
-      fileInput("gtfs_upload", muted_label("GTFS zip file"), accept = ".zip")
-    ),
-    conditionalPanel(
-      "input.gtfs_source == 'url'",
-      textInput("gtfs_url", muted_label("Feed URL"), placeholder = "https://.../gtfs.zip"),
-      actionButton("gtfs_url_load", "Load feed", class = "btn-sm btn-outline-primary")
-    ),
-    div(
-      class = "d-flex align-items-center gap-1",
-      checkboxGroupInput("gtfs_display", muted_label("Show"), choices = lines_stops_choices,
-                          selected = c("lines", "stops"), inline = TRUE),
-      tooltip(
-        icon("circle-info"),
-        "Every GTFS route shape is drawn individually. Stops are colored by",
-        "their primary route, cluster below zoom 10 in overlay mode, and",
-        "show name labels on zoom-in."
+    div(class = "sb-section",
+      section_header("bus", "GTFS", section_tint$`wfrc-secondary-blue`,
+                     control = input_switch("gtfs_enabled", NULL, value = TRUE)),
+      sb_field("Source",
+        radioButtons("gtfs_source", NULL,
+                     choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url"),
+                     selected = "snapshot")
+      ),
+      conditionalPanel(
+        "input.gtfs_source == 'snapshot'",
+        sb_field("Snapshot",
+          selectInput("gtfs_date", NULL, choices = snapshot_choices, selected = initial_date))
+      ),
+      conditionalPanel(
+        "input.gtfs_source == 'upload'",
+        sb_field("GTFS zip file",
+          fileInput("gtfs_upload", NULL, accept = ".zip"))
+      ),
+      conditionalPanel(
+        "input.gtfs_source == 'url'",
+        sb_field("Feed URL",
+          div(
+            textInput("gtfs_url", NULL, placeholder = "https://.../gtfs.zip"),
+            actionButton("gtfs_url_load", "Load feed", class = "btn-sm btn-outline-primary")
+          ))
+      ),
+      sb_field("Show",
+        div(class = "chip-group",
+          checkboxGroupInput("gtfs_display", NULL, choices = lines_stops_choices,
+                             selected = c("lines", "stops"), inline = TRUE)),
+        info = tooltip(
+          span(icon("circle-info"), class = "field-info"),
+          "Every GTFS route shape is drawn individually. Stops are colored by",
+          "their primary route, cluster below zoom 10 in overlay mode, and",
+          "show name labels on zoom-in."
+        )
       )
     ),
-    hr(class = "my-2"),
-    section_header("map", "TDM", section_tint$`wc-light-rail`),
-    input_switch("tdm_enabled", "Enable", value = TRUE),
-    selectInput("tdm_year", muted_label("Year"), choices = all_tdm_years, selected = default_tdm_year),
-    selectInput("tdm_modes", muted_label("Lines"), choices = all_tdm_modes,
-                selected = all_tdm_modes, multiple = TRUE),
-    div(
-      class = "d-flex align-items-center gap-1",
-      checkboxGroupInput("tdm_display", muted_label("Show"), choices = lines_stops_choices,
-                          selected = c("lines", "stops"), inline = TRUE),
-      tooltip(
-        icon("circle-info"),
-        "Dashed lines colored by line type (rail/BRT/core), so the model",
-        "network reads clearly regardless of nearby GTFS route colors."
+    div(class = "sb-section",
+      section_header("map", "TDM", section_tint$`wc-light-rail`,
+                     control = input_switch("tdm_enabled", NULL, value = TRUE)),
+      sb_field("Year",
+        selectInput("tdm_year", NULL, choices = all_tdm_years, selected = default_tdm_year)),
+      sb_field("Line types",
+        selectInput("tdm_modes", NULL, choices = all_tdm_modes,
+                    selected = all_tdm_modes, multiple = TRUE)),
+      sb_field("Show",
+        div(class = "chip-group",
+          checkboxGroupInput("tdm_display", NULL, choices = lines_stops_choices,
+                             selected = c("lines", "stops"), inline = TRUE)),
+        info = tooltip(
+          span(icon("circle-info"), class = "field-info"),
+          "Dashed lines colored by line type (rail/BRT/core), so the model",
+          "network reads clearly regardless of nearby GTFS route colors."
+        )
       )
     ),
-    hr(class = "my-2"),
-    # Basemap is cross-cutting (affects both datasets' rendering, not
-    # GTFS- or TDM-specific), so it gets a plain field rather than its own
-    # tinted section header.
-    selectInput("basemap", muted_label("Basemap"),
-                choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
-                selected = "positron")
+    div(class = "sb-section",
+      # Basemap is cross-cutting (affects both datasets' rendering, not
+      # GTFS- or TDM-specific), so it gets a subtle neutral-tinted header
+      # rather than a brand-color-coded one.
+      section_header("layer-group", "Base map", section_tint$`wfrc-gray`),
+      sb_field("Style",
+        selectInput("basemap", NULL,
+                    choices = c("Positron (light)" = "positron", "Dark Matter (dark)" = "dark-matter"),
+                    selected = "positron"))
+    )
   ),
   nav_panel(
     title = "Map",
@@ -426,8 +390,7 @@ ui <- page_navbar(
       style = "position: relative; height: 100%;",
       uiOutput("map_container"),
       div(
-        class = "position-absolute top-0 start-0 m-3 px-3 py-2 bg-body rounded shadow-sm",
-        style = "z-index: 10;",
+        class = "map-badge position-absolute top-0 start-0 m-3",
         uiOutput("comparison_summary", inline = TRUE)
       )
     )
@@ -455,27 +418,29 @@ server <- function(input, output, session) {
 
   output$comparison_summary <- renderUI({
     gtfs_part <- if (!isTRUE(input$gtfs_enabled)) {
-      "GTFS off"
+      "Off"
     } else {
       switch(input$gtfs_source %||% "snapshot",
-        snapshot = paste("GTFS", input$gtfs_date %||% ""),
-        upload = "GTFS (uploaded feed)",
-        url = "GTFS (feed URL)",
-        "GTFS"
+        snapshot = fmt_snapshot(input$gtfs_date),
+        upload = "Uploaded feed",
+        url = "Feed URL",
+        "On"
       )
     }
     tdm_part <- if (!isTRUE(input$tdm_enabled)) {
-      "TDM off"
+      "Off"
     } else {
-      paste0("TDM ", input$tdm_year %||% "",
+      paste0(input$tdm_year %||% "",
              " (", paste(input$tdm_modes %||% character(0), collapse = ", "), ")")
     }
     span(
       status_dot(section_tint$`wfrc-secondary-blue`, isTRUE(input$gtfs_enabled)),
-      span(gtfs_part, class = "mx-1"),
-      span("·", class = "text-muted"),
+      span("GTFS", class = "badge-dim ms-1 me-1"),
+      span(gtfs_part, class = "badge-seg"),
+      span("|", class = "badge-sep"),
       status_dot(section_tint$`wc-light-rail`, isTRUE(input$tdm_enabled)),
-      span(tdm_part, class = "mx-1")
+      span("TDM", class = "badge-dim ms-1 me-1"),
+      span(tdm_part, class = "badge-seg")
     )
   })
 
@@ -487,11 +452,12 @@ server <- function(input, output, session) {
   # (Overlay / switch / Swipe) tight together.
   output$compare_mode_control <- renderUI({
     div(
-      class = "d-flex align-items-center gap-2",
+      class = "compare-row",
       style = if (!both_enabled()) "opacity: 0.4; pointer-events: none;" else NULL,
-      span("Overlay", class = "small text-muted"),
-      div(style = "width: auto;", input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe))),
-      span("Swipe", class = "small text-muted")
+      span("Overlay", class = "compare-opt"),
+      div(class = "hdr-switch",
+          input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe))),
+      span("Swipe", class = "compare-opt")
     )
   })
 

@@ -1,0 +1,278 @@
+/* ============================================================================
+   WFRC TDM vs GTFS — application design system
+   Loaded on top of the bslib/brand-compiled Bootstrap 5.3 theme. Uses
+   theme-aware Bootstrap variables (--bs-*) so light/dark mode flip
+   automatically, plus a few app-scoped tokens below.
+   ========================================================================== */
+
+:root {
+  --wfrc-shadow: 0 2px 10px rgba(2, 60, 91, .12);
+  --wfrc-radius: 9px;
+
+  /* Neutral label tiers — deliberately NOT brand cyan. In this theme both
+     .text-muted and --bs-secondary-color resolve to secondary-blue, which
+     made every label compete; these give a real gray hierarchy instead. */
+  --wfrc-label:   #6a7682;   /* field labels (Source / Year / ...)           */
+  --wfrc-section: #33424e;   /* section headers — stronger neutral, one tier up */
+  --wfrc-hair:    rgba(2, 60, 91, .09);  /* section divider hairline         */
+  --wfrc-surface: rgba(82, 182, 213, .05);
+}
+
+[data-bs-theme='dark'] {
+  --wfrc-label:   #94a2ae;
+  --wfrc-section: #d6dfe6;
+  --wfrc-hair:    rgba(255, 255, 255, .10);
+  --wfrc-surface: rgba(0, 0, 0, .18);
+}
+
+/* ---------------------------------------------------------------------------
+   Cards / general chrome
+   ------------------------------------------------------------------------- */
+.card { border-radius: .75rem; }
+
+/* ---------------------------------------------------------------------------
+   Navbar — a touch more presence + tighter brand lockup
+   ------------------------------------------------------------------------- */
+.navbar { box-shadow: 0 1px 0 rgba(0, 0, 0, .06); }
+.navbar-brand {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  letter-spacing: .01em;
+  display: flex;
+  align-items: center;
+}
+
+/* ============================================================================
+   SIDEBAR
+   ========================================================================== */
+.bslib-sidebar-layout > .sidebar {
+  background: var(--wfrc-surface);
+  border-right: 1px solid var(--wfrc-hair);
+}
+.bslib-sidebar-layout > .sidebar::-webkit-scrollbar { width: 6px; }
+.bslib-sidebar-layout > .sidebar::-webkit-scrollbar-thumb {
+  background: #52b6d5; border-radius: 3px;
+}
+
+/* The sidebar body is a control panel — set a compact base scale for it and
+   let explicit sizes below build the type hierarchy. */
+.app-sidebar {
+  font-size: 13px;
+  padding-top: .35rem;
+}
+
+/* Section blocks: consistent rhythm on an 8px grid, hairline separators
+   instead of full <hr>s (removed from markup). */
+.sb-section { padding: 14px 0 16px; }
+.sb-section + .sb-section { border-top: 1px solid var(--wfrc-hair); }
+.sb-section:first-child { padding-top: 4px; }
+
+/* --- Section header (icon tile + label, optional right-aligned switch) --- */
+.section-head { margin-bottom: 12px; min-height: 26px; }
+.section-tile {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: .78rem;
+}
+.section-label {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: .74rem;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--wfrc-section);
+  line-height: 1;
+}
+/* Enable switch parked at the right edge of a section header */
+.section-head .hdr-switch { margin-left: auto; }
+.hdr-switch .shiny-input-container,
+.hdr-switch .form-group { width: auto !important; margin: 0 !important; }
+.hdr-switch .form-check {
+  min-height: 0; margin: 0; padding-left: 0; display: inline-flex;
+}
+/* Bootstrap's .form-switch pulls the input left with a -2.5em margin meant
+   to sit under a padding-left label slot; with our zero-padding flex layout
+   that overlaps the neighbour, so neutralise it. */
+.hdr-switch .form-check-input { margin-left: 0; }
+
+/* --- Field wrapper + label ---------------------------------------------- */
+.sb-field { margin-bottom: 12px; }
+.sb-field:last-child { margin-bottom: 0; }
+.field-label {
+  display: block;
+  font-family: 'Inter', sans-serif;
+  font-size: .70rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--wfrc-label);
+  margin-bottom: 5px;
+  line-height: 1.2;
+}
+.field-label .fa, .field-label svg { color: var(--wfrc-label); }
+
+/* Kill Shiny's default control-group bottom margins; rhythm is owned by
+   .sb-field / .sb-section instead. */
+.app-sidebar .form-group,
+.app-sidebar .shiny-input-container { margin-bottom: 0; }
+
+/* --- Unified control sizing (selects / text / file) --------------------- */
+.app-sidebar .form-select,
+.app-sidebar .form-control {
+  font-size: 13px;
+  min-height: 34px;
+  padding: .3rem .6rem;
+  border-radius: 8px;
+  border-color: var(--bs-border-color);
+}
+.app-sidebar .form-select:focus,
+.app-sidebar .form-control:focus {
+  border-color: #52b6d5;
+  box-shadow: 0 0 0 .18rem rgba(82, 182, 213, .25);
+}
+.app-sidebar .form-control-sm,
+.app-sidebar .btn-sm { font-size: 12.5px; }
+
+/* selectize (multi-select for TDM Lines) matched to the same system */
+.app-sidebar .selectize-input {
+  font-size: 13px;
+  min-height: 34px;
+  padding: .28rem .5rem;
+  border-radius: 8px;
+  border-color: var(--bs-border-color);
+}
+.app-sidebar .selectize-input .item {
+  background: rgba(55, 98, 173, .12);
+  color: var(--bs-emphasis-color);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-size: 12px;
+}
+.app-sidebar .selectize-dropdown { font-size: 13px; border-radius: 8px; }
+
+/* File input: keep it compact and on-system */
+.app-sidebar .form-control[type='file'] { padding: .25rem .5rem; }
+
+/* --- Switches ----------------------------------------------------------- */
+.app-sidebar .form-switch .form-check-input {
+  width: 2em; height: 1.1em; margin-top: .1em; cursor: pointer;
+  border-color: var(--bs-border-color);
+}
+.app-sidebar .form-switch .form-check-input:checked {
+  background-color: #023c5b; border-color: #023c5b;
+}
+.app-sidebar .form-switch .form-check-input:focus {
+  box-shadow: 0 0 0 .18rem rgba(82, 182, 213, .25);
+}
+
+/* ---------------------------------------------------------------------------
+   Comparison mode — compact segmented-feel row (Overlay | switch | Swipe)
+   ------------------------------------------------------------------------- */
+.compare-row {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 4px 0;
+}
+.compare-row .compare-opt {
+  font-size: 12.5px; font-weight: 500; color: var(--wfrc-label);
+}
+.compare-row .hdr-switch .form-check { display: inline-flex; }
+
+/* ---------------------------------------------------------------------------
+   GTFS Source — connected 3-segment control (radioButtons, inline=FALSE)
+   ------------------------------------------------------------------------- */
+#gtfs_source .shiny-options-group {
+  display: flex; width: 100%; gap: 0;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px; overflow: hidden;
+}
+#gtfs_source .radio { margin: 0; flex: 1 1 0; min-width: 0; }
+/* radioButtons() nests <input> INSIDE <label>, so :checked must be reached
+   via label:has(), not a sibling selector. */
+#gtfs_source .radio input[type='radio'] {
+  position: absolute; opacity: 0; pointer-events: none;
+}
+#gtfs_source .radio label {
+  display: block; text-align: center; white-space: nowrap;
+  margin: 0; padding: .4rem .3rem; font-size: 12.5px; cursor: pointer;
+  color: var(--wfrc-label); border-right: 1px solid var(--bs-border-color);
+  transition: background-color .12s ease, color .12s ease;
+}
+#gtfs_source .radio:last-child label { border-right: none; }
+#gtfs_source .radio label:hover { background: rgba(82, 182, 213, .08); }
+#gtfs_source .radio label:has(input[type='radio']:checked) {
+  background: #52b6d5; color: #fff; font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Show — pill toggle chips (checkboxGroupInput, inline=TRUE)
+   Chip accent is section-scoped: GTFS = secondary-blue, TDM = light-rail.
+   ------------------------------------------------------------------------- */
+.chip-group .shiny-options-group { display: flex; gap: 7px; }
+.chip-group .checkbox-inline { margin: 0; padding: 0; }
+.chip-group .checkbox-inline input[type='checkbox'] {
+  position: absolute; opacity: 0; pointer-events: none;
+}
+.chip-group .checkbox-inline {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 999px;
+  padding: .25rem .8rem;
+  font-size: 12.5px; font-weight: 500;
+  color: var(--wfrc-label); cursor: pointer;
+  transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+}
+.chip-group .checkbox-inline:hover { border-color: var(--bs-secondary-color); }
+
+#gtfs_display .checkbox-inline:has(input:checked) {
+  background: rgba(82, 182, 213, .14); border-color: #52b6d5; color: var(--bs-emphasis-color);
+}
+#tdm_display .checkbox-inline:has(input:checked) {
+  background: rgba(55, 98, 173, .14); border-color: #3762ad; color: var(--bs-emphasis-color);
+}
+
+/* tooltip info icon next to a field label */
+.field-info { color: var(--wfrc-label); font-size: .72rem; cursor: help; opacity: .8; }
+.field-info:hover { opacity: 1; }
+
+/* ---------------------------------------------------------------------------
+   URL feed loader button
+   ------------------------------------------------------------------------- */
+#gtfs_url_load { margin-top: 8px; border-radius: 8px; font-weight: 500; }
+
+/* ============================================================================
+   MAP — floating summary badge + native MapLibre chrome
+   ========================================================================== */
+.map-badge {
+  z-index: 10;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--wfrc-hair);
+  border-radius: 10px;
+  box-shadow: var(--wfrc-shadow);
+  padding: 7px 13px;
+  font-size: 12.5px;
+}
+.map-badge .badge-seg { font-weight: 500; color: var(--bs-emphasis-color); }
+.map-badge .badge-dim { color: var(--wfrc-label); }
+.map-badge .badge-sep { color: var(--bs-border-color); margin: 0 8px; }
+
+/* MapLibre native chrome adopts the app font + corner radius so the map's
+   own controls/popups/legend read as part of the design system. !important
+   beats their inline-level specificity. */
+.mapboxgl-legend, .maplibregl-ctrl, .maplibregl-ctrl-attrib {
+  font-family: 'Poppins', sans-serif !important;
+}
+.mapgl-legend-title {
+  font-family: 'Inter', sans-serif !important;
+  color: #023c5b !important;
+}
+.maplibregl-ctrl-group {
+  border-radius: 10px !important; overflow: hidden;
+  box-shadow: var(--wfrc-shadow) !important;
+}
+.maplibregl-popup-content {
+  border-radius: 10px !important; box-shadow: var(--wfrc-shadow) !important;
+}
+.mapboxgl-legend {
+  border-radius: 10px !important; box-shadow: var(--wfrc-shadow) !important;
+  border: 1px solid var(--wfrc-hair);
+}
