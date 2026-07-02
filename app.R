@@ -106,8 +106,6 @@ all_tdm_years <- sort(unique(tdm_routes_sf$tdm_year))
 default_tdm_year <- if ("2023" %in% all_tdm_years) "2023" else all_tdm_years[1]
 all_tdm_modes <- intersect(c("brt", "rail", "core"), unique(tdm_routes_sf$tdm_mode))
 
-lines_stops_choices <- c("Lines" = "lines", "Stops" = "stops")
-
 # A small uppercase field label (Source / Year / Show / ...). Deliberately a
 # neutral gray tier (see .field-label in www/custom.css), one step below the
 # section headers, so the sidebar has real hierarchy instead of every label
@@ -142,6 +140,26 @@ sb_field <- function(label, control, info = NULL) {
     control
   )
 }
+
+# A dataset "layer card" (kepler.gl / CARTO pattern): each dataset is a
+# self-contained module with a left accent edge tinted to its on-map color,
+# a subtle surface, and its Enable switch parked in the header -- so the two
+# datasets read as color-keyed layers, not a flat stack of form sections.
+# The accent color is exposed as a CSS custom property (--accent) so the
+# left border, tinted surface, and active-chip color all derive from it.
+layer_card <- function(accent, ...) {
+  div(class = "sb-section sb-card", style = sprintf("--accent: %s;", accent), ...)
+}
+
+# Leading glyphs for the Lines / Stops visibility toggles -- a polyline glyph
+# and a stop-marker glyph, so the chips read as map-layer visibility controls
+# (kepler.gl sublayer toggles) rather than generic text checkboxes. Values
+# stay "lines"/"stops" so every server-side reference is unchanged.
+lines_stops_names <- list(
+  tagList(icon("route"), span("Lines")),
+  tagList(icon("location-dot"), span("Stops"))
+)
+lines_stops_values <- c("lines", "stops")
 
 # Shared by GTFS and TDM stop circles so both sides render at the same size.
 stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14, 6)
@@ -316,7 +334,7 @@ ui <- page_navbar(
       section_header("shuffle", "Comparison", section_tint$`wfrc-yellow`),
       uiOutput("compare_mode_control", inline = TRUE)
     ),
-    div(class = "sb-section",
+    layer_card(section_tint$`wfrc-secondary-blue`,
       section_header("bus", "GTFS", section_tint$`wfrc-secondary-blue`,
                      control = input_switch("gtfs_enabled", NULL, value = TRUE)),
       sb_field("Source",
@@ -344,7 +362,8 @@ ui <- page_navbar(
       ),
       sb_field("Show",
         div(class = "chip-group",
-          checkboxGroupInput("gtfs_display", NULL, choices = lines_stops_choices,
+          checkboxGroupInput("gtfs_display", NULL,
+                             choiceNames = lines_stops_names, choiceValues = lines_stops_values,
                              selected = c("lines", "stops"), inline = TRUE)),
         info = tooltip(
           span(icon("circle-info"), class = "field-info"),
@@ -354,7 +373,7 @@ ui <- page_navbar(
         )
       )
     ),
-    div(class = "sb-section",
+    layer_card(section_tint$`wc-light-rail`,
       section_header("map", "TDM", section_tint$`wc-light-rail`,
                      control = input_switch("tdm_enabled", NULL, value = TRUE)),
       sb_field("Year",
@@ -364,7 +383,8 @@ ui <- page_navbar(
                     selected = all_tdm_modes, multiple = TRUE)),
       sb_field("Show",
         div(class = "chip-group",
-          checkboxGroupInput("tdm_display", NULL, choices = lines_stops_choices,
+          checkboxGroupInput("tdm_display", NULL,
+                             choiceNames = lines_stops_names, choiceValues = lines_stops_values,
                              selected = c("lines", "stops"), inline = TRUE)),
         info = tooltip(
           span(icon("circle-info"), class = "field-info"),

@@ -58,14 +58,40 @@
    let explicit sizes below build the type hierarchy. */
 .app-sidebar {
   font-size: 13px;
-  padding-top: .35rem;
+  padding-top: .15rem;
 }
 
-/* Section blocks: consistent rhythm on an 8px grid, hairline separators
-   instead of full <hr>s (removed from markup). */
-.sb-section { padding: 14px 0 16px; }
-.sb-section + .sb-section { border-top: 1px solid var(--wfrc-hair); }
-.sb-section:first-child { padding-top: 4px; }
+/* Section blocks: consistent rhythm on an 8px grid. The Comparison strip is a
+   plain (non-card) mode control at the top; the two datasets below are real
+   "layer cards" (see .sb-card). */
+.sb-section { padding: 12px 0 14px; }
+.sb-section:first-child { padding-top: 2px; }
+/* Faint divider under the top (non-card) Comparison strip, separating the
+   mode control from the layer cards — no hairline between the cards
+   themselves, since each card's own edge already separates them. */
+.sb-section:not(.sb-card) + .sb-card { margin-top: 2px; }
+.sb-section:not(.sb-card) { border-bottom: 1px solid var(--wfrc-hair); }
+
+/* --- Layer card (kepler.gl / CARTO dataset-as-a-card pattern) ------------
+   Each dataset is a contained module with a left accent edge tinted to its
+   on-map color (--accent, set inline per card). The surface is that same
+   accent mixed a few % into the body background, so the card reads as
+   color-keyed to its map layer rather than a flat form section. */
+.sb-card {
+  position: relative;
+  padding: 12px 13px 13px;
+  margin-top: 12px;
+  border: 1px solid var(--wfrc-hair);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--wfrc-surface);
+  background: color-mix(in srgb, var(--accent) 4%, var(--bs-body-bg));
+  box-shadow: 0 1px 2px rgba(2, 60, 91, .04);
+}
+[data-bs-theme='dark'] .sb-card {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bs-body-bg));
+  box-shadow: none;
+}
 
 /* --- Section header (icon tile + label, optional right-aligned switch) --- */
 .section-head { margin-bottom: 12px; min-height: 26px; }
@@ -166,14 +192,27 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Comparison mode — compact segmented-feel row (Overlay | switch | Swipe)
+   Comparison mode — custom segmented control (Overlay | switch | Swipe).
+   The switch stays the real control; the two labels form a pill and the
+   active side lights up via :has(input:checked), so it reads as a built
+   segmented toggle rather than a bare Bootstrap switch with two stray words.
    ------------------------------------------------------------------------- */
 .compare-row {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  padding: 4px 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+  width: fit-content; margin: 4px auto 0; padding: 5px 14px;
+  border: 1px solid var(--wfrc-hair);
+  border-radius: 999px;
+  background: var(--bs-body-bg);
 }
 .compare-row .compare-opt {
   font-size: 12.5px; font-weight: 500; color: var(--wfrc-label);
+  transition: color .15s ease, font-weight .15s ease;
+}
+/* Highlight the currently-active side: Overlay when unchecked, Swipe when
+   checked. */
+.compare-row:not(:has(input:checked)) .compare-opt:first-child,
+.compare-row:has(input:checked) .compare-opt:last-child {
+  color: var(--bs-emphasis-color); font-weight: 700;
 }
 .compare-row .hdr-switch .form-check { display: inline-flex; }
 
@@ -204,8 +243,11 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Show — pill toggle chips (checkboxGroupInput, inline=TRUE)
-   Chip accent is section-scoped: GTFS = secondary-blue, TDM = light-rail.
+   Show — layer-visibility toggle chips (checkboxGroupInput, inline=TRUE).
+   Each chip carries a leading glyph (a route/line glyph, a stop-marker glyph)
+   so it reads as a map sublayer-visibility control (kepler.gl pattern), not a
+   generic text checkbox. Active color derives from the card's --accent
+   (GTFS = secondary-blue, TDM = light-rail) so it matches the on-map layer.
    ------------------------------------------------------------------------- */
 .chip-group .shiny-options-group { display: flex; gap: 7px; }
 .chip-group .checkbox-inline { margin: 0; padding: 0; }
@@ -213,21 +255,31 @@
   position: absolute; opacity: 0; pointer-events: none;
 }
 .chip-group .checkbox-inline {
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--bs-border-color);
   border-radius: 999px;
-  padding: .25rem .8rem;
+  padding: .26rem .7rem;
   font-size: 12.5px; font-weight: 500;
   color: var(--wfrc-label); cursor: pointer;
   transition: background-color .12s ease, color .12s ease, border-color .12s ease;
 }
 .chip-group .checkbox-inline:hover { border-color: var(--bs-secondary-color); }
-
-#gtfs_display .checkbox-inline:has(input:checked) {
-  background: rgba(82, 182, 213, .14); border-color: #52b6d5; color: var(--bs-emphasis-color);
+.chip-group .checkbox-inline .fa,
+.chip-group .checkbox-inline svg {
+  font-size: .72rem; color: var(--wfrc-label);
+  transition: color .12s ease;
 }
-#tdm_display .checkbox-inline:has(input:checked) {
-  background: rgba(55, 98, 173, .14); border-color: #3762ad; color: var(--bs-emphasis-color);
+
+/* Active chip: accent-tinted fill + border + glyph, driven by the card's
+   --accent so both datasets stay color-keyed to their map layer. */
+.sb-card .chip-group .checkbox-inline:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--bs-emphasis-color);
+}
+.sb-card .chip-group .checkbox-inline:has(input:checked) .fa,
+.sb-card .chip-group .checkbox-inline:has(input:checked) svg {
+  color: var(--accent);
 }
 
 /* tooltip info icon next to a field label */
@@ -242,18 +294,35 @@
 /* ============================================================================
    MAP — floating summary badge + native MapLibre chrome
    ========================================================================== */
+/* Frosted-glass floating panel (Felt / CARTO overlay pattern): translucent
+   body-bg + backdrop blur so map detail shows faintly through it and it reads
+   as hovering over the map, not pasted on. Solid-bg fallback first for
+   engines without backdrop-filter. */
 .map-badge {
   z-index: 10;
   background: var(--bs-body-bg);
+  background: color-mix(in srgb, var(--bs-body-bg) 76%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  backdrop-filter: blur(12px) saturate(1.3);
   border: 1px solid var(--wfrc-hair);
-  border-radius: 10px;
-  box-shadow: var(--wfrc-shadow);
-  padding: 7px 13px;
+  border-radius: 11px;
+  box-shadow: 0 6px 20px rgba(2, 60, 91, .16), 0 1px 3px rgba(2, 60, 91, .10);
+  padding: 8px 14px;
   font-size: 12.5px;
 }
-.map-badge .badge-seg { font-weight: 500; color: var(--bs-emphasis-color); }
+/* Data values (snapshot date, TDM year/modes) in monospace so they read as
+   data the way Mapbox Studio renders numeric fields. */
+.map-badge .badge-seg {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-weight: 500; font-size: 12px; letter-spacing: -.02em;
+  color: var(--bs-emphasis-color);
+}
 .map-badge .badge-dim { color: var(--wfrc-label); }
 .map-badge .badge-sep { color: var(--bs-border-color); margin: 0 8px; }
+
+/* Data-value selects (snapshot date, TDM year) in monospace too. */
+.app-sidebar #gtfs_date,
+.app-sidebar #tdm_year { font-family: 'Fira Code', ui-monospace, monospace; }
 
 /* MapLibre native chrome adopts the app font + corner radius so the map's
    own controls/popups/legend read as part of the design system. !important
@@ -263,16 +332,33 @@
 }
 .mapgl-legend-title {
   font-family: 'Inter', sans-serif !important;
-  color: #023c5b !important;
+  color: var(--bs-emphasis-color) !important;
 }
+/* Consistent floating-panel elevation for all native chrome: hairline +
+   layered soft shadow so zoom controls, popups and the legend read as the
+   same family of panels floating over the map as the summary badge. */
 .maplibregl-ctrl-group {
   border-radius: 10px !important; overflow: hidden;
-  box-shadow: var(--wfrc-shadow) !important;
+  border: 1px solid var(--wfrc-hair) !important;
+  box-shadow: 0 6px 20px rgba(2, 60, 91, .16), 0 1px 3px rgba(2, 60, 91, .10) !important;
 }
 .maplibregl-popup-content {
-  border-radius: 10px !important; box-shadow: var(--wfrc-shadow) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 6px 20px rgba(2, 60, 91, .16), 0 1px 3px rgba(2, 60, 91, .10) !important;
 }
-.mapboxgl-legend {
-  border-radius: 10px !important; box-shadow: var(--wfrc-shadow) !important;
-  border: 1px solid var(--wfrc-hair);
+/* mapgl nests the positioned legend (.bottom-right) inside a bare
+   .mapboxgl-legend wrapper. Style ONLY the inner positioned element — putting
+   backdrop-filter on the outer wrapper would make it the containing block for
+   the absolutely-positioned inner legend and fling it off-screen. */
+.mapboxgl-legend.bottom-right,
+.mapboxgl-legend.bottom-left,
+.mapboxgl-legend.top-right,
+.mapboxgl-legend.top-left {
+  border-radius: 11px !important;
+  border: 1px solid var(--wfrc-hair) !important;
+  box-shadow: 0 6px 20px rgba(2, 60, 91, .16), 0 1px 3px rgba(2, 60, 91, .10) !important;
+  background: var(--bs-body-bg);
+  background: color-mix(in srgb, var(--bs-body-bg) 82%, transparent) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  backdrop-filter: blur(12px) saturate(1.3);
 }
