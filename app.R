@@ -18,18 +18,23 @@ source("R/tdm_pipeline.R")
 brand_yml_path <- "_brand/_extensions/wfrc-brand/brand.yml"
 addResourcePath("brand", "_brand/_extensions/wfrc-brand/assets")
 
-# The R brand.yml package (0.1.0) only supports a single string for
-# color.foreground/color.background, not the light/dark variant maps WFRC's
-# brand.yml uses there (unlike e.g. logo.*, where light/dark maps are a
-# documented, supported part of the spec) -- flatten those two fields to
+# The R brand.yml package (0.1.0) requires a single string for every
+# color.* theme field and every typography.*.color/background-color field
+# (confirmed in its source, brand_color.R/brand_typography.R -- both check
+# these with ptype = "string", no light/dark map support), unlike e.g.
+# logo.*, where light/dark maps are a documented, supported part of the
+# spec. Checked WFRC's brand.yml directly (grep light:/dark:) -- exactly
+# three fields use a light/dark map outside of logo.*: color.foreground,
+# color.background, and typography.headings.color. Flatten those three to
 # their light-mode value before handing the brand off to bs_theme(). Dark
 # mode itself still works via Bootstrap's own input_dark_mode() mechanism;
-# it just won't pick up WFRC's specific dark background/foreground colors
+# it just won't pick up WFRC's specific dark-mode values for these three
 # until the R package supports this.
 brand_data <- yaml::read_yaml(brand_yml_path)
 flatten_light_dark <- function(x) if (is.list(x) && !is.null(x$light)) x$light else x
 brand_data$color$foreground <- flatten_light_dark(brand_data$color$foreground)
 brand_data$color$background <- flatten_light_dark(brand_data$color$background)
+brand_data$typography$headings$color <- flatten_light_dark(brand_data$typography$headings$color)
 
 gtfs_raw_dir <- "_data/gtfs"
 tdm_gdb_path <- "_data/tdm/WFv1000_MasterNet_20260430.gdb.zip"
@@ -249,11 +254,13 @@ ui <- page_navbar(
   theme = bs_theme(brand = brand_data) |>
     bs_add_rules(".card { border-radius: .75rem; }"),
   window_title = "WFRC TDM vs GTFS",
-  tags$head(
-    tags$link(rel = "icon", type = "image/png",
-              href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png")
+  header = tagList(
+    tags$head(
+      tags$link(rel = "icon", type = "image/png",
+                href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png")
+    ),
+    busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
-  busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5"),
   nav_panel(
     title = "Map",
     card(
