@@ -323,6 +323,32 @@ ui <- page_navbar(
     tags$head(
       tags$link(rel = "icon", type = "image/png",
                 href = "brand/logo/abbreviated/WFRC_logo_abbreviated_color_transparent.png"),
+      # bslib self-hosts brand.yml's Google Fonts by downloading each
+      # weight/style/subset combo and serving it locally (see the
+      # Poppins-0.4.10/Inter-0.4.10/Fira_Code-0.4.10 links this generates).
+      # On this machine several of those cached files are corrupted -- byte-
+      # diffed the self-hosted Poppins 600 "latin" file against the same file
+      # fetched fresh from fonts.gstatic.com and it's 42 bytes larger,
+      # diverging partway through; Chromium's font sanitizer (OTS) rejects it
+      # ("Failed to convert WOFF 2.0 font to SFNT") and silently falls all
+      # the way back to the browser's default serif font for any text set in
+      # that specific weight -- e.g. the segmented control's active label
+      # (font-weight: 600). Confirmed reproducible across many past
+      # sessions' Rtmp caches, so this is a real upstream self-hosting bug,
+      # not a one-off download glitch -- not something fixable from CSS.
+      # Loading the same families/weights directly from Google's CDN adds a
+      # second, working @font-face source for the browser to fall back to
+      # (multiple @font-face rules for the same family/weight/style act as a
+      # fallback list) without touching bslib's self-hosted CSS at all.
+      tags$link(rel = "preconnect", href = "https://fonts.googleapis.com"),
+      tags$link(rel = "preconnect", href = "https://fonts.gstatic.com", crossorigin = NA),
+      tags$link(rel = "stylesheet", href = paste0(
+        "https://fonts.googleapis.com/css2?",
+        "family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700",
+        "&family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700",
+        "&family=Fira+Code:wght@400;500;700",
+        "&display=swap"
+      )),
       tags$link(rel = "stylesheet", href = "custom.css")
     ),
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
