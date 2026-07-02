@@ -87,11 +87,18 @@
   background: var(--wfrc-surface);
   background: color-mix(in srgb, var(--accent) 4%, var(--bs-body-bg));
   box-shadow: 0 1px 2px rgba(2, 60, 91, .04);
+  transition: box-shadow .15s ease;
 }
+.sb-card:hover { box-shadow: 0 3px 10px rgba(2, 60, 91, .09); }
 [data-bs-theme='dark'] .sb-card {
   background: color-mix(in srgb, var(--accent) 9%, var(--bs-body-bg));
   box-shadow: none;
 }
+[data-bs-theme='dark'] .sb-card:hover { box-shadow: 0 3px 10px rgba(0, 0, 0, .3); }
+
+/* Default sizing for the bespoke brand icon set (R/icons.R) -- scales with
+   the surrounding text the same way a font-based icon would. */
+.brand-icon { width: 1em; height: 1em; flex-shrink: 0; }
 
 /* --- Section header (icon tile + label, optional right-aligned switch) --- */
 .section-head { margin-bottom: 12px; min-height: 26px; }
@@ -192,95 +199,99 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Comparison mode — custom segmented control (Overlay | switch | Swipe).
-   The switch stays the real control; the two labels form a pill and the
-   active side lights up via :has(input:checked), so it reads as a built
-   segmented toggle rather than a bare Bootstrap switch with two stray words.
+   Segmented control (www/app.js SegmentedInputBinding) -- a real custom
+   component, not a styled radioButtons()/input_switch(): <button> options
+   with a sliding indicator pill positioned by JS via transform/width.
+   Two contexts share the same markup: the Comparison strip (a centered,
+   pill-shaped, fit-content control) and the GTFS Source picker inside its
+   layer card (a full-width, boxier 3-segment control). --accent is either
+   the ancestor .sb-card's own custom property, or (for Comparison, which
+   isn't a card) passed inline from R to match its section tile's tint.
    ------------------------------------------------------------------------- */
-.compare-row {
-  display: inline-flex; align-items: center; justify-content: center; gap: 12px;
-  width: fit-content; margin: 4px auto 0; padding: 5px 14px;
-  border: 1px solid var(--wfrc-hair);
-  border-radius: 999px;
+.segmented {
+  position: relative;
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  overflow: hidden;
   background: var(--bs-body-bg);
 }
-.compare-row .compare-opt {
-  font-size: 12.5px; font-weight: 500; color: var(--wfrc-label);
-  transition: color .15s ease, font-weight .15s ease;
-}
-/* Highlight the currently-active side: Overlay when unchecked, Swipe when
-   checked. */
-.compare-row:not(:has(input:checked)) .compare-opt:first-child,
-.compare-row:has(input:checked) .compare-opt:last-child {
-  color: var(--bs-emphasis-color); font-weight: 700;
-}
-.compare-row .hdr-switch .form-check { display: inline-flex; }
+.compare-row { display: flex; justify-content: center; margin-top: 4px; }
+.compare-row .segmented { width: fit-content; border-radius: 999px; }
 
-/* ---------------------------------------------------------------------------
-   GTFS Source — connected 3-segment control (radioButtons, inline=FALSE)
-   ------------------------------------------------------------------------- */
-#gtfs_source .shiny-options-group {
-  display: flex; width: 100%; gap: 0;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 8px; overflow: hidden;
+.segmented-indicator {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 0;
+  background: var(--accent, #52b6d5);
+  border-radius: inherit;
+  z-index: 0;
 }
-#gtfs_source .radio { margin: 0; flex: 1 1 0; min-width: 0; }
-/* radioButtons() nests <input> INSIDE <label>, so :checked must be reached
-   via label:has(), not a sibling selector. */
-#gtfs_source .radio input[type='radio'] {
-  position: absolute; opacity: 0; pointer-events: none;
-}
-#gtfs_source .radio label {
-  display: block; text-align: center; white-space: nowrap;
-  margin: 0; padding: .4rem .3rem; font-size: 12.5px; cursor: pointer;
-  color: var(--wfrc-label); border-right: 1px solid var(--bs-border-color);
-  transition: background-color .12s ease, color .12s ease;
-}
-#gtfs_source .radio:last-child label { border-right: none; }
-#gtfs_source .radio label:hover { background: rgba(82, 182, 213, .08); }
-#gtfs_source .radio label:has(input[type='radio']:checked) {
-  background: #52b6d5; color: #fff; font-weight: 600;
+/* No transition until the first real layout pass has positioned the
+   indicator, so it doesn't visibly sweep in from the top-left on load. */
+.segmented.segmented-ready .segmented-indicator {
+  transition: transform .22s cubic-bezier(.4, 0, .2, 1), width .22s cubic-bezier(.4, 0, .2, 1);
 }
 
+.segmented-option {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--bs-border-color);
+  margin: 0;
+  padding: .4rem .5rem;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--wfrc-label);
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s ease;
+}
+.segmented-option:last-child { border-right: none; }
+.compare-row .segmented-option { flex: 0 0 auto; padding: .35rem 1.1rem; border-right: none; }
+.segmented-option:hover:not(.is-active) { color: var(--bs-emphasis-color); }
+.segmented-option.is-active { color: #fff; font-weight: 600; }
+.segmented-option:focus-visible { outline: 2px solid var(--accent, #52b6d5); outline-offset: -2px; z-index: 2; }
+
 /* ---------------------------------------------------------------------------
-   Show — layer-visibility toggle chips (checkboxGroupInput, inline=TRUE).
-   Each chip carries a leading glyph (a route/line glyph, a stop-marker glyph)
-   so it reads as a map sublayer-visibility control (kepler.gl pattern), not a
-   generic text checkbox. Active color derives from the card's --accent
+   Chip group (www/app.js ChipGroupInputBinding) -- layer-visibility toggle
+   chips for "Show" (Lines/Stops). Each chip carries a leading brand_icon()
+   glyph so it reads as a map sublayer-visibility control (kepler.gl pattern),
+   not a generic checkbox. Active color derives from the card's --accent
    (GTFS = secondary-blue, TDM = light-rail) so it matches the on-map layer.
    ------------------------------------------------------------------------- */
-.chip-group .shiny-options-group { display: flex; gap: 7px; }
-.chip-group .checkbox-inline { margin: 0; padding: 0; }
-.chip-group .checkbox-inline input[type='checkbox'] {
-  position: absolute; opacity: 0; pointer-events: none;
-}
-.chip-group .checkbox-inline {
+.chip-group { display: flex; gap: 7px; flex-wrap: wrap; }
+.chip-option {
   display: inline-flex; align-items: center; gap: 6px;
+  appearance: none;
   border: 1px solid var(--bs-border-color);
   border-radius: 999px;
+  background: transparent;
+  margin: 0;
   padding: .26rem .7rem;
+  font-family: inherit;
   font-size: 12.5px; font-weight: 500;
   color: var(--wfrc-label); cursor: pointer;
-  transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+  transition: background-color .12s ease, color .12s ease, border-color .12s ease, transform .08s ease;
 }
-.chip-group .checkbox-inline:hover { border-color: var(--bs-secondary-color); }
-.chip-group .checkbox-inline .fa,
-.chip-group .checkbox-inline svg {
-  font-size: .72rem; color: var(--wfrc-label);
-  transition: color .12s ease;
-}
+.chip-option:hover { border-color: var(--bs-secondary-color); }
+.chip-option:active { transform: scale(.96); }
+.chip-option:focus-visible { outline: 2px solid var(--accent, #52b6d5); outline-offset: 1px; }
+.chip-option .brand-icon { width: 13px; height: 13px; color: var(--wfrc-label); transition: color .12s ease; }
 
-/* Active chip: accent-tinted fill + border + glyph, driven by the card's
-   --accent so both datasets stay color-keyed to their map layer. */
-.sb-card .chip-group .checkbox-inline:has(input:checked) {
+.sb-card .chip-option.is-active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: var(--accent);
   color: var(--bs-emphasis-color);
 }
-.sb-card .chip-group .checkbox-inline:has(input:checked) .fa,
-.sb-card .chip-group .checkbox-inline:has(input:checked) svg {
-  color: var(--accent);
-}
+.sb-card .chip-option.is-active .brand-icon { color: var(--accent); }
 
 /* tooltip info icon next to a field label */
 .field-info { color: var(--wfrc-label); font-size: .72rem; cursor: help; opacity: .8; }
@@ -361,4 +372,73 @@
   background: color-mix(in srgb, var(--bs-body-bg) 82%, transparent) !important;
   -webkit-backdrop-filter: blur(12px) saturate(1.3);
   backdrop-filter: blur(12px) saturate(1.3);
+}
+
+/* ---------------------------------------------------------------------------
+   Skeleton loading state for the live GTFS/TDM session load (~10-15s on a
+   fresh session -- every session reprocesses both datasets live, no
+   pre-baked cache). Shiny puts a "recalculating" class on any bound output
+   element while its render*() block is running server-side -- including
+   htmlwidget outputs like maplibreOutput()/maplibreCompareOutput() -- so
+   this needs no custom JS or message-passing, just CSS keyed off a class
+   Shiny already applies. Turns what has repeatedly read as "the map is
+   broken" during testing into a designed, reassuring loading moment.
+   ------------------------------------------------------------------------- */
+/* mapgl's own JS only applies its width:100%/height:100% inline style once
+   the widget starts initializing, partway through the recalculating window
+   -- without a CSS fallback the div sits at its intrinsic (near-empty) size
+   for the first part of the load. */
+#map, #compare_map { width: 100%; height: 100%; }
+
+#map.recalculating,
+#compare_map.recalculating { position: relative; }
+
+/* The shimmer lives on the ::after overlay itself, not on #map's own
+   background -- MapLibre's <canvas> paints progressively as its own async
+   process (base fill, then tiles) independent of the server-side
+   renderMaplibre() reactive still "recalculating", and canvas paint sits
+   on top of a plain element background, silently hiding it wherever the
+   canvas has already drawn opaque pixels (confirmed via live inspection:
+   a background-only shimmer showed through only in the still-blank canvas
+   regions, reading as a stray box rather than a full loading state). A
+   positioned ::after with its own opaque background is guaranteed to paint
+   above the canvas regardless of how far MapLibre's own render has gotten. */
+/* Solid, always-visible base fill (--bs-tertiary-bg is a clear step off
+   white) so the loading state reads clearly regardless of animation phase;
+   the shimmer itself is a separate lighter highlight band swept across on
+   top of that base via background-image, the standard skeleton-loading
+   technique -- a single animated gradient used as both base and highlight
+   (the first version of this) is only clearly visible at the instant the
+   highlight passes a given point, reading as a stray "box" everywhere else. */
+#map.recalculating::after,
+#compare_map.recalculating::after {
+  content: "Loading live transit data\2026";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bs-tertiary-bg);
+  background-image: linear-gradient(
+    100deg,
+    transparent 35%,
+    color-mix(in srgb, var(--bs-body-bg) 70%, transparent) 50%,
+    transparent 65%
+  );
+  background-size: 250% 100%;
+  animation: wfrc-shimmer 1.6s ease-in-out infinite;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--wfrc-label);
+  pointer-events: none;
+}
+@keyframes wfrc-shimmer {
+  0% { background-position: 250% 0; }
+  100% { background-position: -250% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #map.recalculating::after, #compare_map.recalculating::after { animation: none; }
 }

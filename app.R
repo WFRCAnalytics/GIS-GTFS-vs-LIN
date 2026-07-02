@@ -10,6 +10,8 @@ suppressPackageStartupMessages({
 
 source("R/gtfs_pipeline.R")
 source("R/tdm_pipeline.R")
+source("R/icons.R")
+source("R/custom_inputs.R")
 
 # WFRC's brand.yml lives inside a git submodule (a Quarto-extension layout,
 # not a root-level _brand.yml, so bslib's auto-discovery won't find it --
@@ -122,7 +124,7 @@ field_label <- function(text) span(text, class = "field-label")
 section_tint <- brand_data$color$palette
 section_header <- function(icon_name, label, tint, control = NULL) {
   div(class = "section-head d-flex align-items-center gap-2",
-    span(icon(icon_name), class = "section-tile",
+    span(brand_icon(icon_name), class = "section-tile",
          style = sprintf("background: %s26; color: %s;", tint, tint)),
     span(label, class = "section-label"),
     if (!is.null(control)) div(class = "hdr-switch", control)
@@ -151,15 +153,12 @@ layer_card <- function(accent, ...) {
   div(class = "sb-section sb-card", style = sprintf("--accent: %s;", accent), ...)
 }
 
-# Leading glyphs for the Lines / Stops visibility toggles -- a polyline glyph
-# and a stop-marker glyph, so the chips read as map-layer visibility controls
-# (kepler.gl sublayer toggles) rather than generic text checkboxes. Values
-# stay "lines"/"stops" so every server-side reference is unchanged.
-lines_stops_names <- list(
-  tagList(icon("route"), span("Lines")),
-  tagList(icon("location-dot"), span("Stops"))
-)
-lines_stops_values <- c("lines", "stops")
+# Lines / Stops visibility toggles -- a route glyph and a pin glyph, so the
+# chips read as map-layer visibility controls (kepler.gl sublayer toggles)
+# rather than generic checkboxes. Values stay "lines"/"stops" so every
+# server-side reference (gtfs_display/tdm_display %in% checks) is unchanged.
+lines_stops_choices <- c("Lines" = "lines", "Stops" = "stops")
+lines_stops_icons <- list(lines = "route", stops = "pin")
 
 # Shared by GTFS and TDM stop circles so both sides render at the same size.
 stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14, 6)
@@ -349,7 +348,11 @@ ui <- page_navbar(
         "&family=Fira+Code:wght@400;500;700",
         "&display=swap"
       )),
-      tags$link(rel = "stylesheet", href = "custom.css")
+      tags$link(rel = "stylesheet", href = "custom.css"),
+      # Registers the custom Shiny.InputBinding components (segmented
+      # control, chip group) used throughout the sidebar -- see
+      # R/custom_inputs.R for the markup they bind to.
+      tags$script(src = "app.js")
     ),
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
@@ -364,9 +367,9 @@ ui <- page_navbar(
       section_header("bus", "GTFS", section_tint$`wfrc-secondary-blue`,
                      control = input_switch("gtfs_enabled", NULL, value = TRUE)),
       sb_field("Source",
-        radioButtons("gtfs_source", NULL,
-                     choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url"),
-                     selected = "snapshot")
+        segmented_input("gtfs_source",
+                        choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url"),
+                        selected = "snapshot", label = "GTFS source")
       ),
       conditionalPanel(
         "input.gtfs_source == 'snapshot'",
@@ -387,12 +390,10 @@ ui <- page_navbar(
           ))
       ),
       sb_field("Show",
-        div(class = "chip-group",
-          checkboxGroupInput("gtfs_display", NULL,
-                             choiceNames = lines_stops_names, choiceValues = lines_stops_values,
-                             selected = c("lines", "stops"), inline = TRUE)),
+        chip_group_input("gtfs_display", choices = lines_stops_choices, selected = c("lines", "stops"),
+                         icons = lines_stops_icons, label = "GTFS layers shown"),
         info = tooltip(
-          span(icon("circle-info"), class = "field-info"),
+          span(brand_icon("info"), class = "field-info"),
           "Every GTFS route shape is drawn individually. Stops are colored by",
           "their primary route, cluster below zoom 10 in overlay mode, and",
           "show name labels on zoom-in."
@@ -408,12 +409,10 @@ ui <- page_navbar(
         selectInput("tdm_modes", NULL, choices = all_tdm_modes,
                     selected = all_tdm_modes, multiple = TRUE)),
       sb_field("Show",
-        div(class = "chip-group",
-          checkboxGroupInput("tdm_display", NULL,
-                             choiceNames = lines_stops_names, choiceValues = lines_stops_values,
-                             selected = c("lines", "stops"), inline = TRUE)),
+        chip_group_input("tdm_display", choices = lines_stops_choices, selected = c("lines", "stops"),
+                         icons = lines_stops_icons, label = "TDM layers shown"),
         info = tooltip(
-          span(icon("circle-info"), class = "field-info"),
+          span(brand_icon("info"), class = "field-info"),
           "Dashed lines colored by line type (rail/BRT/core), so the model",
           "network reads clearly regardless of nearby GTFS route colors."
         )
@@ -442,8 +441,10 @@ server <- function(input, output, session) {
 
   both_enabled <- reactive(isTRUE(input$gtfs_enabled) && isTRUE(input$tdm_enabled))
   # Swipe only makes sense when both datasets are on -- force overlay
-  # whenever one is disabled, regardless of the switch's last position.
-  compare_mode <- reactive(if (both_enabled() && isTRUE(input$compare_swipe)) "swipe" else "overlay")
+  # whenever one is disabled, regardless of the control's last position.
+  # compare_swipe is string-valued ("overlay"/"swipe") now that it's a
+  # segmented_input() instead of the old input_switch() boolean.
+  compare_mode <- reactive(if (both_enabled() && identical(input$compare_swipe, "swipe")) "swipe" else "overlay")
 
   # A small colored dot, tinted to match the corresponding sidebar section
   # header, dimmed when that dataset is disabled -- ties the floating map
@@ -484,19 +485,21 @@ server <- function(input, output, session) {
   })
 
   # Rendered as its own output (not inlined in the sidebar) so it can
-  # live-update -- grey out and lock as soon as GTFS or TDM gets disabled.
-  # input_switch()'s wrapping .shiny-input-container defaults to width:100%,
-  # which as a flex child stretches to fill the row and strands the "Swipe"
-  # label at the far edge -- wrap it at width:auto to keep the three pieces
-  # (Overlay / switch / Swipe) tight together.
+  # live-update -- grey out and lock as soon as GTFS or TDM gets disabled,
+  # since swiping between one dataset and nothing doesn't make sense.
   output$compare_mode_control <- renderUI({
+    # --accent isn't set by an ancestor .sb-card here (Comparison isn't a
+    # layer card), so pass the section's own tint through inline -- the
+    # segmented control's sliding indicator picks it up via
+    # var(--accent, ...) the same way chip actives do inside the cards.
     div(
       class = "compare-row",
-      style = if (!both_enabled()) "opacity: 0.4; pointer-events: none;" else NULL,
-      span("Overlay", class = "compare-opt"),
-      div(class = "hdr-switch",
-          input_switch("compare_swipe", NULL, value = isTRUE(input$compare_swipe))),
-      span("Swipe", class = "compare-opt")
+      style = paste0(
+        sprintf("--accent: %s;", section_tint$`wfrc-yellow`),
+        if (!both_enabled()) " opacity: 0.4; pointer-events: none;" else ""
+      ),
+      segmented_input("compare_swipe", choices = c(Overlay = "overlay", Swipe = "swipe"),
+                      selected = input$compare_swipe %||% "overlay", label = "Comparison mode")
     )
   })
 
