@@ -100,6 +100,22 @@ all_tdm_modes <- intersect(c("brt", "rail", "core"), unique(tdm_routes_sf$tdm_mo
 lines_stops_choices <- c("Lines" = "lines", "Stops" = "stops")
 muted_label <- function(text) span(text, class = "small text-muted")
 
+# Section header used for the sidebar's three top-level groups: a small
+# tinted "icon tile" (colored background + matching icon color, GTFSx-style
+# category badge) followed by an uppercase, letter-spaced label -- gives the
+# section headers a visually distinct tier above the plain muted field
+# labels (Source/Show/Year/etc.), instead of everything being ad hoc bold
+# text at the same weight. Tints come straight from WFRC's own brand
+# palette (brand_data$color$palette), not any borrowed color.
+section_tint <- brand_data$color$palette
+section_header <- function(icon_name, label, tint) {
+  div(class = "d-flex align-items-center gap-2 mb-2",
+    span(icon(icon_name), class = "section-tile",
+         style = sprintf("background: %s26; color: %s;", tint, tint)),
+    span(label, class = "section-label")
+  )
+}
+
 # Shared by GTFS and TDM stop circles so both sides render at the same size.
 stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14, 6)
 
@@ -266,6 +282,75 @@ ui <- page_navbar(
       ".mapgl-legend-title {",
       "  font-family: 'Inter', sans-serif !important;",
       "  color: #023c5b !important;",
+      "}",
+      # Round the MapLibre controls/popups/legend to the same corner radius
+      # as .card, so the map's own native chrome reads as part of the same
+      # design system instead of sitting there in its library-default shape.
+      # One shared shadow token, reused below for the floating summary badge.
+      ":root { --wfrc-shadow: 0 2px 10px rgba(2, 60, 91, .12); }",
+      ".maplibregl-ctrl-group {",
+      "  border-radius: 10px !important;",
+      "  overflow: hidden;",
+      "  box-shadow: var(--wfrc-shadow) !important;",
+      "}",
+      ".maplibregl-popup-content {",
+      "  border-radius: 10px !important;",
+      "  box-shadow: var(--wfrc-shadow) !important;",
+      "}",
+      ".mapboxgl-legend {",
+      "  border-radius: 10px !important;",
+      "  box-shadow: var(--wfrc-shadow) !important;",
+      "}",
+      # Section header icon tile + uppercase label (see section_header()).
+      ".section-tile {",
+      "  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;",
+      "  display: inline-flex; align-items: center; justify-content: center;",
+      "  font-size: .8rem;",
+      "}",
+      ".section-label {",
+      "  font-family: 'Inter', sans-serif; font-weight: 700; font-size: .75rem;",
+      "  text-transform: uppercase; letter-spacing: .06em;",
+      "  color: var(--bs-secondary-color);",
+      "}",
+      # Sidebar gets a faint tint so it reads as a distinct panel next to the
+      # edge-to-edge map, plus a slim brand-tinted scrollbar for when its
+      # content outgrows the viewport height.
+      ".bslib-sidebar-layout > .sidebar {",
+      "  background: rgba(82, 182, 213, .06);",
+      "}",
+      "[data-bs-theme='dark'] .bslib-sidebar-layout > .sidebar {",
+      "  background: rgba(0, 0, 0, .15);",
+      "}",
+      ".bslib-sidebar-layout > .sidebar::-webkit-scrollbar { width: 6px; }",
+      ".bslib-sidebar-layout > .sidebar::-webkit-scrollbar-thumb {",
+      "  background: #52b6d5; border-radius: 3px;",
+      "}",
+      # Segmented-pill restyle of the GTFS Source radio group: hide the
+      # native radio circles, turn the labels into a connected 3-segment
+      # button row (Shiny renders radioButtons(inline=FALSE) as stacked
+      # divs, so this is also a layout change, not just a skin).
+      "#gtfs_source .shiny-options-group {",
+      "  display: flex; gap: 0; border: 1px solid var(--bs-border-color);",
+      "  border-radius: 8px; overflow: hidden; width: fit-content;",
+      "}",
+      "#gtfs_source .radio { margin: 0; }",
+      # radioButtons() nests <input> *inside* <label> (not as a sibling), so
+      # the checked style has to target the label via :has() rather than a
+      # `+` sibling selector -- confirmed against Shiny's actual generated
+      # markup, not guessed.
+      "#gtfs_source .radio input[type='radio'] {",
+      "  position: absolute; opacity: 0; pointer-events: none;",
+      "}",
+      "#gtfs_source .radio label {",
+      "  margin: 0; padding: .3rem .65rem; font-size: .8125rem; cursor: pointer;",
+      "  border-right: 1px solid var(--bs-border-color);",
+      "}",
+      "#gtfs_source .radio:last-child label { border-right: none; }",
+      # var(--bs-emphasis-color), not a hardcoded navy, so the active
+      # segment's text stays legible in both light and dark mode (Bootstrap
+      # 5.3 flips this variable per-theme automatically).
+      "#gtfs_source .radio label:has(input[type='radio']:checked) {",
+      "  background: #52b6d526; color: var(--bs-emphasis-color); font-weight: 600;",
       "}"
     )),
   window_title = "WFRC TDM vs GTFS",
@@ -278,13 +363,10 @@ ui <- page_navbar(
   ),
   sidebar = sidebar(
     width = 280,
-    div(
-      class = "d-flex align-items-center gap-2 mb-1",
-      icon("shuffle"), strong("Comparison mode")
-    ),
+    section_header("shuffle", "Comparison mode", section_tint$`wfrc-yellow`),
     div(class = "mb-3", uiOutput("compare_mode_control", inline = TRUE)),
     hr(class = "my-2"),
-    div(class = "d-flex align-items-center gap-2 mb-2", icon("bus"), strong("GTFS")),
+    section_header("bus", "GTFS", section_tint$`wfrc-secondary-blue`),
     input_switch("gtfs_enabled", "Enable", value = TRUE),
     radioButtons("gtfs_source", muted_label("Source"),
                  choices = c("Saved snapshot" = "snapshot", "Upload zip" = "upload", "Feed URL" = "url"),
@@ -295,8 +377,13 @@ ui <- page_navbar(
                   choices = available_dates, selected = initial_date)
     ),
     conditionalPanel(
-      "input.gtfs_source != 'snapshot'",
-      p(class = "small text-muted", "Configure via the gear icon above.")
+      "input.gtfs_source == 'upload'",
+      fileInput("gtfs_upload", muted_label("GTFS zip file"), accept = ".zip")
+    ),
+    conditionalPanel(
+      "input.gtfs_source == 'url'",
+      textInput("gtfs_url", muted_label("Feed URL"), placeholder = "https://.../gtfs.zip"),
+      actionButton("gtfs_url_load", "Load feed", class = "btn-sm btn-outline-primary")
     ),
     div(
       class = "d-flex align-items-center gap-1",
@@ -310,7 +397,7 @@ ui <- page_navbar(
       )
     ),
     hr(class = "my-2"),
-    div(class = "d-flex align-items-center gap-2 mb-2", icon("map"), strong("TDM")),
+    section_header("map", "TDM", section_tint$`wc-light-rail`),
     input_switch("tdm_enabled", "Enable", value = TRUE),
     selectInput("tdm_year", muted_label("Year"), choices = all_tdm_years, selected = default_tdm_year),
     selectInput("tdm_modes", muted_label("Lines"), choices = all_tdm_modes,
@@ -324,7 +411,14 @@ ui <- page_navbar(
         "Dashed lines colored by line type (rail/BRT/core), so the model",
         "network reads clearly regardless of nearby GTFS route colors."
       )
-    )
+    ),
+    hr(class = "my-2"),
+    # Basemap is cross-cutting (affects both datasets' rendering, not
+    # GTFS- or TDM-specific), so it gets a plain field rather than its own
+    # tinted section header.
+    selectInput("basemap", muted_label("Basemap"),
+                choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
+                selected = "positron")
   ),
   nav_panel(
     title = "Map",
@@ -334,14 +428,12 @@ ui <- page_navbar(
       div(
         class = "position-absolute top-0 start-0 m-3 px-3 py-2 bg-body rounded shadow-sm",
         style = "z-index: 10;",
-        textOutput("comparison_summary", inline = TRUE)
+        uiOutput("comparison_summary", inline = TRUE)
       )
     )
   ),
   nav_spacer(),
-  nav_item(input_dark_mode()),
-  nav_item(actionButton("open_settings", label = "Configure", icon = icon("gear"),
-                         class = "btn-outline-light"))
+  nav_item(input_dark_mode())
 )
 
 server <- function(input, output, session) {
@@ -351,42 +443,17 @@ server <- function(input, output, session) {
   # whenever one is disabled, regardless of the switch's last position.
   compare_mode <- reactive(if (both_enabled() && isTRUE(input$compare_swipe)) "swipe" else "overlay")
 
-  # Reopening the settings modal re-renders these inputs from scratch, so
-  # each one's initial value has to come from the current input (falling
-  # back to a default only the first time) or it would silently reset on
-  # every reopen. Only gtfs_url/basemap still live in the modal -- everything
-  # else moved to the always-present sidebar, which doesn't need this.
-  val <- function(id, default) if (is.null(input[[id]])) default else input[[id]]
-
-  settings_modal <- function() {
-    modalDialog(
-      title = "Data source & basemap",
-      easyClose = TRUE,
-      footer = modalButton("Close"),
-      conditionalPanel(
-        "input.gtfs_source == 'upload'",
-        fileInput("gtfs_upload", "GTFS zip file", accept = ".zip")
-      ),
-      conditionalPanel(
-        "input.gtfs_source == 'url'",
-        textInput("gtfs_url", "Feed URL", value = val("gtfs_url", ""),
-                  placeholder = "https://.../gtfs.zip"),
-        actionButton("gtfs_url_load", "Load feed")
-      ),
-      conditionalPanel(
-        "input.gtfs_source == 'snapshot'",
-        p(class = "text-muted small", "Using a saved GTFS snapshot -- pick the date from the sidebar.")
-      ),
-      hr(),
-      selectInput("basemap", "Basemap",
-                  choices = c("Positron" = "positron", "Dark Matter" = "dark-matter"),
-                  selected = val("basemap", "positron"))
-    )
+  # A small colored dot, tinted to match the corresponding sidebar section
+  # header, dimmed when that dataset is disabled -- ties the floating map
+  # badge back to the sidebar's own color coding instead of being plain text.
+  status_dot <- function(tint, enabled) {
+    span(style = sprintf(
+      "display:inline-block; width:8px; height:8px; border-radius:50%%; background:%s; opacity:%s;",
+      tint, if (enabled) "1" else ".3"
+    ))
   }
 
-  observeEvent(input$open_settings, showModal(settings_modal()))
-
-  output$comparison_summary <- renderText({
+  output$comparison_summary <- renderUI({
     gtfs_part <- if (!isTRUE(input$gtfs_enabled)) {
       "GTFS off"
     } else {
@@ -403,7 +470,13 @@ server <- function(input, output, session) {
       paste0("TDM ", input$tdm_year %||% "",
              " (", paste(input$tdm_modes %||% character(0), collapse = ", "), ")")
     }
-    paste(gtfs_part, "·", tdm_part)
+    span(
+      status_dot(section_tint$`wfrc-secondary-blue`, isTRUE(input$gtfs_enabled)),
+      span(gtfs_part, class = "mx-1"),
+      span("·", class = "text-muted"),
+      status_dot(section_tint$`wc-light-rail`, isTRUE(input$tdm_enabled)),
+      span(tdm_part, class = "mx-1")
+    )
   })
 
   # Rendered as its own output (not inlined in the sidebar) so it can
@@ -470,10 +543,9 @@ server <- function(input, output, session) {
   gtfs_routes_sf <- reactive({ req(gtfs_data()); gtfs_data()$routes_shapes_sf })
   gtfs_stops_sf <- reactive({ req(gtfs_data()); gtfs_data()$stops_sf })
 
-  # basemap lives in the modal, which (unlike the sidebar) only renders once
-  # the user opens it -- the initial map build happens before that, so
-  # input$basemap can still be NULL at that point. Fall back to the same
-  # default the modal's own selectInput uses.
+  # basemap now lives in the always-present sidebar (rendered at session
+  # start, same as everything else), but the %||% fallback stays as cheap
+  # insurance against any input-binding-order edge case.
   current_basemap <- reactive(input$basemap %||% "positron")
 
   tdm_group_names <- reactive({
