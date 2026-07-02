@@ -7,10 +7,10 @@ suppressPackageStartupMessages({
 })
 
 source("R/gtfs_pipeline.R")
+source("R/tdm_pipeline.R")
 
 gtfs_raw_dir <- "_data/gtfs"
-tdm_routes_path <- "_data/tdm/tdm_routes.geojson"
-tdm_stops_path <- "_data/tdm/tdm_stops.geojson"
+tdm_gdb_path <- "_data/tdm/WFv1000_MasterNet_20260430.gdb.zip"
 
 gtfs_raw_zips <- list.files(gtfs_raw_dir, pattern = "\\.zip$", full.names = TRUE)
 names(gtfs_raw_zips) <- vapply(gtfs_raw_zips, function(f) extract_date(basename(f)), character(1))
@@ -28,8 +28,9 @@ initial_gtfs <- build_gtfs_layers(gtfs_raw_zips[[initial_date]])
 initial_gtfs_routes_sf <- initial_gtfs$routes_shapes_sf
 initial_gtfs_stops_sf <- initial_gtfs$stops_sf
 
-tdm_routes_sf <- st_read(tdm_routes_path, quiet = TRUE)
-tdm_stops_sf <- st_read(tdm_stops_path, quiet = TRUE)
+tdm_data <- build_tdm_layers(tdm_gdb_path)
+tdm_routes_sf <- tdm_data$routes_sf
+tdm_stops_sf <- tdm_data$stops_sf
 
 # tdm_group (e.g. "rail_2023", "wfrc_brt_2055UF") bundles year + line type
 # together; split them out so each can be its own control.
