@@ -19,6 +19,33 @@ extract_date <- function(filename) {
   m
 }
 
+# Some raw zips have their GTFS .txt files nested inside a subfolder (e.g.
+# 20230723.zip contains 20230723/agency.txt, .../routes.txt, ...) instead of
+# at the zip root. gtfsio doesn't handle that cleanly -- it can end up
+# reading files from both the root and the subfolder, corrupting columns
+# like shapes.txt's lat/lon. Normalize every zip to a flat, single-copy
+# layout before handing it to read_gtfs().
+flatten_gtfs_zip <- function(zip_path) {
+  extract_dir <- file.path(tempdir(), paste0("gtfs_extract_", tools::file_path_sans_ext(basename(zip_path))))
+  unlink(extract_dir, recursive = TRUE)
+  dir.create(extract_dir, recursive = TRUE)
+  utils::unzip(zip_path, exdir = extract_dir)
+
+  agency_files <- list.files(extract_dir, pattern = "^agency\\.txt$", recursive = TRUE, full.names = TRUE)
+  if (length(agency_files) == 0) stop("Could not find agency.txt inside ", zip_path)
+  gtfs_dir <- dirname(agency_files[1])
+
+  txt_files <- list.files(gtfs_dir, pattern = "\\.txt$")
+  flat_zip <- file.path(tempdir(), paste0(tools::file_path_sans_ext(basename(zip_path)), "_flat.zip"))
+  if (file.exists(flat_zip)) file.remove(flat_zip)
+
+  old_wd <- setwd(gtfs_dir)
+  on.exit(setwd(old_wd), add = TRUE)
+  zip::zip(flat_zip, txt_files)
+
+  flat_zip
+}
+
 normalize_color <- function(x, default) {
   x <- trimws(x)
   ifelse(is.na(x) | x == "", paste0("#", default), paste0("#", x))
@@ -29,7 +56,7 @@ process_feed <- function(zip_path, date) {
   out_dir <- file.path(out_root, date)
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-  gtfs <- read_gtfs(zip_path)
+  gtfs <- read_gtfs(flatten_gtfs_zip(zip_path))
 
   routes <- gtfs$routes %>%
     mutate(
@@ -50,32 +77,36 @@ process_feed <- function(zip_path, date) {
     select(shape_id, route_id, direction_id, route_short_name,
            route_long_name, route_type, route_color, route_text_color)
 
-  # Route-level dissolve: matches the granularity of the TDM PTLine layer
-  # for a cleaner visual side-by-side.
-  routes_dissolved_sf <- routes_shapes_sf %>%
-    group_by(route_id, route_short_name, route_long_name, route_type,
-             route_color, route_text_color) %>%
-    summarise(.groups = "drop")
-
-  # Stops: unchanged retention (stop_id, stop_name, serving route_ids),
-  # rebuilt from the raw zip instead of the GTFS2GIS output.
-  stop_routes <- gtfs$stop_times %>%
+  # Stops: retain serving route_ids, plus a stop_color matching GTFSx's stop
+  # styling -- the primary (first, alphabetically) serving route's
+  # route_color, falling back to GTFSx's default #8B7E74 for stops with no
+  # assigned route.
+  stop_route_pairs <- gtfs$stop_times %>%
     distinct(stop_id, trip_id) %>%
     inner_join(distinct(gtfs$trips, trip_id, route_id), by = "trip_id") %>%
     distinct(stop_id, route_id) %>%
+    arrange(stop_id, route_id)
+
+  stop_routes <- stop_route_pairs %>%
     group_by(stop_id) %>%
-    summarise(route_ids = paste(sort(unique(route_id)), collapse = ","), .groups = "drop")
+    summarise(route_ids = paste(unique(route_id), collapse = ","),
+              primary_route_id = dplyr::first(route_id), .groups = "drop") %>%
+    left_join(select(routes, route_id, route_color),
+              by = c("primary_route_id" = "route_id")) %>%
+    mutate(stop_color = ifelse(is.na(route_color), "#8B7E74", route_color)) %>%
+    select(stop_id, route_ids, stop_color)
 
   stops_sf <- stops_as_sf(gtfs$stops) %>%
     left_join(stop_routes, by = "stop_id") %>%
-    select(stop_id, stop_name, route_ids)
+    mutate(stop_color = ifelse(is.na(stop_color), "#8B7E74", stop_color)) %>%
+    select(stop_id, stop_name, route_ids, stop_color)
 
-  old_routes_geojson <- file.path(out_dir, "routes.geojson")
-  if (file.exists(old_routes_geojson)) file.remove(old_routes_geojson)
+  for (stale in c("routes.geojson", "routes_dissolved.geojson")) {
+    stale_path <- file.path(out_dir, stale)
+    if (file.exists(stale_path)) file.remove(stale_path)
+  }
 
   st_write(routes_shapes_sf, file.path(out_dir, "routes_shapes.geojson"),
-           delete_dsn = TRUE, quiet = TRUE)
-  st_write(routes_dissolved_sf, file.path(out_dir, "routes_dissolved.geojson"),
            delete_dsn = TRUE, quiet = TRUE)
   st_write(stops_sf, file.path(out_dir, "stops.geojson"),
            delete_dsn = TRUE, quiet = TRUE)
