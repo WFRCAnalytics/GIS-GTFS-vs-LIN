@@ -64,7 +64,6 @@ snapshot_choices <- setNames(available_dates, vapply(available_dates, fmt_snapsh
 initial_date <- available_dates[1]
 initial_gtfs <- build_gtfs_layers(gtfs_raw_zips[[initial_date]])
 initial_gtfs_routes_sf <- initial_gtfs$routes_shapes_sf
-initial_gtfs_stops_sf <- initial_gtfs$stops_sf
 
 tdm_data <- build_tdm_layers(tdm_gdb_path)
 tdm_routes_sf <- tdm_data$routes_sf
@@ -81,8 +80,14 @@ parse_tdm_mode <- function(group) {
   )
 }
 parse_tdm_year <- function(group) {
-  m <- regmatches(group, regexpr("[0-9]{4}(UF)?$", group))
-  ifelse(nchar(m) == 0, "unknown", m)
+  # regmatches(x, regexpr(...)) silently DROPS elements that don't match
+  # instead of returning "" for them, so the old ifelse(nchar(m)==0, ...)
+  # fallback could never fire and a single non-matching group would shrink
+  # the result vector and break the `tdm_routes_sf$tdm_year <- ...`
+  # assignment outright. Read the match position/length from regexpr()
+  # directly and substring() per-element instead, which preserves length.
+  starts <- regexpr("[0-9]{4}(UF)?$", group)
+  ifelse(starts == -1, "unknown", substring(group, starts, starts + attr(starts, "match.length") - 1))
 }
 
 tdm_routes_sf$tdm_mode <- parse_tdm_mode(tdm_routes_sf$tdm_group)
@@ -163,11 +168,14 @@ lines_stops_icons <- list(lines = "route", stops = "pin")
 # Shared by GTFS and TDM stop circles so both sides render at the same size.
 stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14, 6)
 
-gtfs_cluster_options <- function() {
+# GTFS and TDM stop clusters share every setting except color -- one
+# parameterized helper instead of two copy-pasted cluster_options() calls
+# that could silently drift apart on future tweaks (radius, stroke, etc).
+stop_cluster_options <- function(color) {
   cluster_options(
     max_zoom = 10,
     cluster_radius = 50,
-    color_stops = rep("#3E7C8B", 3),
+    color_stops = rep(color, 3),
     radius_stops = c(14, 20, 30),
     count_stops = c(0, 50, 1000),
     circle_stroke_color = "#ffffff",
@@ -177,20 +185,8 @@ gtfs_cluster_options <- function() {
     count_format = "abbreviated"
   )
 }
-tdm_cluster_options <- function() {
-  cluster_options(
-    max_zoom = 10,
-    cluster_radius = 50,
-    color_stops = rep("#333333", 3),
-    radius_stops = c(14, 20, 30),
-    count_stops = c(0, 50, 1000),
-    circle_stroke_color = "#ffffff",
-    circle_stroke_width = 1.5,
-    circle_opacity = 0.85,
-    text_color = "#ffffff",
-    count_format = "abbreviated"
-  )
-}
+gtfs_cluster_options <- function() stop_cluster_options("#3E7C8B")
+tdm_cluster_options <- function() stop_cluster_options("#333333")
 
 # GTFSx-style layers: routes colored by route_color, stops colored (ring) by
 # their primary serving route and clustered below zoom 10, labels gated to
@@ -213,32 +209,18 @@ add_gtfs_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visibl
       visibility = lines_visibility
     )
 
-  map <- if (cluster) {
-    add_circle_layer(
-      map,
-      id = "gtfs_stops",
-      source = stops_sf,
-      circle_color = get_column("stop_color"),
-      circle_radius = stop_radius_expr,
-      circle_stroke_color = "#ffffff",
-      circle_stroke_width = 1,
-      popup = "stop_name",
-      visibility = stops_visibility,
-      cluster_options = gtfs_cluster_options()
-    )
-  } else {
-    add_circle_layer(
-      map,
-      id = "gtfs_stops",
-      source = stops_sf,
-      circle_color = get_column("stop_color"),
-      circle_radius = stop_radius_expr,
-      circle_stroke_color = "#ffffff",
-      circle_stroke_width = 1,
-      popup = "stop_name",
-      visibility = stops_visibility
-    )
-  }
+  map <- add_circle_layer(
+    map,
+    id = "gtfs_stops",
+    source = stops_sf,
+    circle_color = get_column("stop_color"),
+    circle_radius = stop_radius_expr,
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 1,
+    popup = "stop_name",
+    visibility = stops_visibility,
+    cluster_options = if (cluster) gtfs_cluster_options() else NULL
+  )
 
   map |>
     add_symbol_layer(
@@ -271,30 +253,17 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
       visibility = lines_visibility
     )
 
-  map <- if (cluster) {
-    add_circle_layer(
-      map,
-      id = "tdm_stops",
-      source = stops_sf,
-      circle_color = "#000000",
-      circle_radius = stop_radius_expr,
-      circle_stroke_color = "#ffffff",
-      circle_stroke_width = 1,
-      visibility = stops_visibility,
-      cluster_options = tdm_cluster_options()
-    )
-  } else {
-    add_circle_layer(
-      map,
-      id = "tdm_stops",
-      source = stops_sf,
-      circle_color = "#000000",
-      circle_radius = stop_radius_expr,
-      circle_stroke_color = "#ffffff",
-      circle_stroke_width = 1,
-      visibility = stops_visibility
-    )
-  }
+  map <- add_circle_layer(
+    map,
+    id = "tdm_stops",
+    source = stops_sf,
+    circle_color = "#000000",
+    circle_radius = stop_radius_expr,
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 1,
+    visibility = stops_visibility,
+    cluster_options = if (cluster) tdm_cluster_options() else NULL
+  )
 
   map |>
     add_legend(
@@ -357,7 +326,7 @@ ui <- page_navbar(
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
   sidebar = sidebar(
-    width = 300,
+    width = 340,
     class = "app-sidebar",
     div(class = "sb-section",
       section_header("shuffle", "Comparison", section_tint$`wfrc-yellow`),
@@ -486,7 +455,15 @@ server <- function(input, output, session) {
 
   # Rendered as its own output (not inlined in the sidebar) so it can
   # live-update -- grey out and lock as soon as GTFS or TDM gets disabled,
-  # since swiping between one dataset and nothing doesn't make sense.
+  # since swiping between one dataset and nothing doesn't make sense. Only
+  # meant to react to both_enabled() (the lock state); input$compare_swipe
+  # is read via isolate() so it's just a snapshot for the initial `selected`
+  # value on a re-render, not a reactive dependency -- without isolate(),
+  # this block also re-ran on every click of the segmented control itself,
+  # which replaces the control's entire DOM (Shiny's renderUI unbind/rebind)
+  # and silently broke the roving-tabindex keyboard focus app.js sets right
+  # after a click (the newly-focused <button> gets destroyed and recreated,
+  # unfocused, on every single Arrow-key press).
   output$compare_mode_control <- renderUI({
     # --accent isn't set by an ancestor .sb-card here (Comparison isn't a
     # layer card), so pass the section's own tint through inline -- the
@@ -499,7 +476,7 @@ server <- function(input, output, session) {
         if (!both_enabled()) " opacity: 0.4; pointer-events: none;" else ""
       ),
       segmented_input("compare_swipe", choices = c(Overlay = "overlay", Swipe = "swipe"),
-                      selected = input$compare_swipe %||% "overlay", label = "Comparison mode")
+                      selected = isolate(input$compare_swipe) %||% "overlay", label = "Comparison mode")
     )
   })
 
@@ -682,8 +659,17 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   observeEvent(input$dark_mode, {
-    gtfs_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
-    tdm_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
+    # gtfs_proxy()/tdm_proxy() both resolve to the same maplibre_proxy("map")
+    # in overlay mode -- calling set_style() on each would fire two
+    # overlapping async style-reload/layer-restore operations against the
+    # identical map instance. Only swipe mode has two genuinely distinct
+    # maps needing their own call.
+    if (compare_mode() == "swipe") {
+      gtfs_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
+      tdm_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
+    } else {
+      maplibre_proxy("map") |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
+    }
   }, ignoreInit = TRUE)
 }
 

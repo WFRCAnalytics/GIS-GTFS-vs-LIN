@@ -390,6 +390,15 @@
    for the first part of the load. */
 #map, #compare_map { width: 100%; height: 100%; }
 
+/* The swipe-compare drag handle (.compare-swiper-vertical, a 60px circle
+   centered on the divider line) protrudes past #compare_map's own right
+   edge once the divider is dragged near the far right -- its radius, not
+   just the divider line, sticks out. bslib's own sidebar-layout ".main"
+   wrapper has overflow-x: auto, so that protrusion was showing up as a
+   real horizontal scrollbar on the whole page. Clipping it at the map's
+   own boundary (its natural visual edge anyway) contains it there instead. */
+#compare_map { overflow: hidden; }
+
 #map.recalculating,
 #compare_map.recalculating { position: relative; }
 
