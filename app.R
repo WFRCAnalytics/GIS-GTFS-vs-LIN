@@ -372,16 +372,6 @@ ui <- page_navbar(
           "network reads clearly regardless of nearby GTFS route colors."
         )
       )
-    ),
-    div(class = "sb-section",
-      # Basemap is cross-cutting (affects both datasets' rendering, not
-      # GTFS- or TDM-specific), so it gets a subtle neutral-tinted header
-      # rather than a brand-color-coded one.
-      section_header("layer-group", "Base map", section_tint$`wfrc-gray`),
-      sb_field("Style",
-        selectInput("basemap", NULL,
-                    choices = c("Positron (light)" = "positron", "Dark Matter (dark)" = "dark-matter"),
-                    selected = "positron"))
     )
   ),
   nav_panel(
@@ -396,7 +386,10 @@ ui <- page_navbar(
     )
   ),
   nav_spacer(),
-  nav_item(input_dark_mode())
+  # id is required for the mode to be readable server-side (input$dark_mode);
+  # the map's basemap style follows it instead of its own selector -- see
+  # current_basemap() below.
+  nav_item(input_dark_mode(id = "dark_mode"))
 )
 
 server <- function(input, output, session) {
@@ -509,10 +502,16 @@ server <- function(input, output, session) {
   gtfs_routes_sf <- reactive({ req(gtfs_data()); gtfs_data()$routes_shapes_sf })
   gtfs_stops_sf <- reactive({ req(gtfs_data()); gtfs_data()$stops_sf })
 
-  # basemap now lives in the always-present sidebar (rendered at session
-  # start, same as everything else), but the %||% fallback stays as cheap
-  # insurance against any input-binding-order edge case.
-  current_basemap <- reactive(input$basemap %||% "positron")
+  # No separate basemap picker -- it follows the light/dark mode toggle
+  # instead (Dark Matter in dark mode, Positron in light mode), since running
+  # a light basemap under dark chrome (or vice versa) never looked
+  # intentional. input$dark_mode can be NULL for an instant before the
+  # client-side toggle's initial value round-trips to the server (see
+  # input_dark_mode() docs -- id is required to read it reactively at all);
+  # %||% covers that brief gap the same way the old selector's fallback did.
+  current_basemap <- reactive(
+    if (identical(input$dark_mode %||% "light", "dark")) "dark-matter" else "positron"
+  )
 
   tdm_group_names <- reactive({
     req(input$tdm_year, input$tdm_modes)
@@ -633,9 +632,9 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
-  observeEvent(input$basemap, {
-    gtfs_proxy() |> set_style(carto_style(input$basemap), preserve_layers = TRUE)
-    tdm_proxy() |> set_style(carto_style(input$basemap), preserve_layers = TRUE)
+  observeEvent(input$dark_mode, {
+    gtfs_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
+    tdm_proxy() |> set_style(carto_style(current_basemap()), preserve_layers = TRUE)
   }, ignoreInit = TRUE)
 }
 
