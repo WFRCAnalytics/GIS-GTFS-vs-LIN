@@ -1,6 +1,8 @@
 suppressPackageStartupMessages({
   library(shiny)
   library(bslib)
+  library(brand.yml)
+  library(yaml)
   library(mapgl)
   library(sf)
   library(dplyr)
@@ -15,6 +17,19 @@ source("R/tdm_pipeline.R")
 # copying them into www/ via addResourcePath().
 brand_yml_path <- "_brand/_extensions/wfrc-brand/brand.yml"
 addResourcePath("brand", "_brand/_extensions/wfrc-brand/assets")
+
+# The R brand.yml package (0.1.0) only supports a single string for
+# color.foreground/color.background, not the light/dark variant maps WFRC's
+# brand.yml uses there (unlike e.g. logo.*, where light/dark maps are a
+# documented, supported part of the spec) -- flatten those two fields to
+# their light-mode value before handing the brand off to bs_theme(). Dark
+# mode itself still works via Bootstrap's own input_dark_mode() mechanism;
+# it just won't pick up WFRC's specific dark background/foreground colors
+# until the R package supports this.
+brand_data <- yaml::read_yaml(brand_yml_path)
+flatten_light_dark <- function(x) if (is.list(x) && !is.null(x$light)) x$light else x
+brand_data$color$foreground <- flatten_light_dark(brand_data$color$foreground)
+brand_data$color$background <- flatten_light_dark(brand_data$color$background)
 
 gtfs_raw_dir <- "_data/gtfs"
 tdm_gdb_path <- "_data/tdm/WFv1000_MasterNet_20260430.gdb.zip"
@@ -231,7 +246,7 @@ ui <- page_navbar(
         height = "28px", alt = "WFRC logo", class = "me-2"),
     "TDM vs GTFS"
   ),
-  theme = bs_theme(brand = brand_yml_path) |>
+  theme = bs_theme(brand = brand_data) |>
     bs_add_rules(".card { border-radius: .75rem; }"),
   window_title = "WFRC TDM vs GTFS",
   tags$head(
