@@ -1,5 +1,5 @@
 # Shared GTFS extraction pipeline used by app.R for every GTFS source --
-# saved snapshots (read live from _data/gtfs/raw/), user uploads, and feed
+# saved snapshots (read live from _data/gtfs/), user uploads, and feed
 # URLs -- so there's exactly one extraction code path, not a pre-baked one
 # for snapshots and a separate live one for everything else.
 

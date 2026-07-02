@@ -8,7 +8,7 @@ suppressPackageStartupMessages({
 
 source("R/gtfs_pipeline.R")
 
-gtfs_raw_dir <- "_data/gtfs/raw"
+gtfs_raw_dir <- "_data/gtfs"
 tdm_routes_path <- "_data/tdm/tdm_routes.geojson"
 tdm_stops_path <- "_data/tdm/tdm_stops.geojson"
 
