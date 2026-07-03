@@ -39,7 +39,12 @@ brand_data$color$background <- flatten_light_dark(brand_data$color$background)
 brand_data$typography$headings$color <- flatten_light_dark(brand_data$typography$headings$color)
 
 gtfs_raw_dir <- "_data/gtfs"
-tdm_gdb_path <- "_data/tdm/WFv1000_MasterNet_20260430.gdb.zip"
+# The .gdb sits one folder deeper in this zip than the old export (a
+# "PS_RTP_Transit_Stops/" wrapper folder inside the zip, ahead of the .gdb
+# itself) -- confirmed via `ogrinfo` against /vsizip/ directly: the bare zip
+# path fails ("not recognized as being in a supported file format"), the
+# .gdb needs to be addressed explicitly at its real nested location.
+tdm_gdb_path <- "_data/tdm/PS_RTP_Transit_Stops.zip/PS_RTP_Transit_Stops/WFv1000_MasterNet_20260430.gdb"
 
 gtfs_raw_zips <- list.files(gtfs_raw_dir, pattern = "\\.zip$", full.names = TRUE)
 names(gtfs_raw_zips) <- vapply(gtfs_raw_zips, function(f) extract_date(basename(f)), character(1))
@@ -171,13 +176,22 @@ stop_radius_expr <- list("interpolate", list("linear"), list("zoom"), 10, 3, 14,
 # GTFS and TDM stop clusters share every setting except color -- one
 # parameterized helper instead of two copy-pasted cluster_options() calls
 # that could silently drift apart on future tweaks (radius, stroke, etc).
+#
+# radius_stops/count_stops re-verified directly against GTFSx's actual
+# clusterCircle layer (src/components/map/StopLayer.tsx): its circle-radius
+# step expression is `['step', ['get','point_count'], 14, 50, 18, 200, 24,
+# 1000, 30]` -- a 4-tier scale (14/18/24/30 at count breakpoints 50/200/
+# 1000). This had drifted to a coarser 3-tier scale (14/20/30 at just
+# 50/1000, no 200 breakpoint at all), so any cluster in the 200-999 range
+# rendered at radius 20 instead of GTFSx's 24 -- a real, confirmed size
+# mismatch, not a guess.
 stop_cluster_options <- function(color) {
   cluster_options(
     max_zoom = 10,
     cluster_radius = 50,
-    color_stops = rep(color, 3),
-    radius_stops = c(14, 20, 30),
-    count_stops = c(0, 50, 1000),
+    color_stops = rep(color, 4),
+    radius_stops = c(14, 18, 24, 30),
+    count_stops = c(0, 50, 200, 1000),
     circle_stroke_color = "#ffffff",
     circle_stroke_width = 1.5,
     circle_opacity = 0.85,

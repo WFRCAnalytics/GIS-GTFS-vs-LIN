@@ -186,6 +186,7 @@
       var widget = window.HTMLWidgets && HTMLWidgets.find && HTMLWidgets.find("#map");
       var map = widget && widget.getMap && widget.getMap();
       if (map) {
+        watchContainerResize(event.target, map);
         if (map.loaded()) {
           Shiny.setInputValue("map_ready", Date.now());
         } else {
@@ -201,4 +202,27 @@
     }
     waitForMap(50); // up to ~5s
   });
+
+  /*
+   * htmlwidgets.js only calls a widget's resize() method in response to the
+   * *window*'s resize event (see htmlwidgets.js: `on(window, "resize",
+   * resizeHandler)`) -- it has no ResizeObserver on the widget's own
+   * container element. This app's #map container is sized by bslib's flex
+   * fill layout, which can still be settling (fonts loading, sidebar
+   * measuring itself) a moment after first paint, with no window resize
+   * event involved at all. MapLibre's <canvas> has explicit width/height
+   * attributes set at creation time and never finds out the container
+   * changed size unless map.resize() is called directly -- left alone this
+   * shows up as an undersized/stretched map right after load, and a
+   * fit_bounds() flyTo that appears to snap instead of animate because it's
+   * animating relative to stale canvas dimensions.
+   */
+  function watchContainerResize(el, map) {
+    if (el._mapglResizeObserver) el._mapglResizeObserver.disconnect();
+    var ro = new ResizeObserver(function () {
+      map.resize();
+    });
+    ro.observe(el);
+    el._mapglResizeObserver = ro;
+  }
 })();

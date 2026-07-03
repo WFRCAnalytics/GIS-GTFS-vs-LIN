@@ -390,6 +390,25 @@
    for the first part of the load. */
 #map, #compare_map { width: 100%; height: 100%; }
 
+/* #map_container (the uiOutput wrapping #map/#compare_map) has no explicit
+   height of its own -- its parent (the nav_panel's position:relative div)
+   has height:100%, and #map itself gets height:100% inline from
+   maplibreOutput(height="100%"), but a percentage height can't resolve
+   through a middle element that has no declared height at all, so
+   #map_container sits at its shrink-to-fit (near-zero) height until
+   something else forces a reflow. Since output$map now renders almost
+   immediately (see app.R -- the globe-view basemap doesn't wait on the
+   live data pipeline the way it used to), the map widget can initialize
+   while this height is still ambiguous, causing a visible small-then-
+   expands pop on load, and worse: fit_bounds()'s fly-to animation
+   computes its target camera position against whatever (wrong, tiny)
+   container size existed when it ran, then gets abruptly corrected once
+   the container's real size resolves and mapgl calls resize() -- reading
+   as an instant jump-cut instead of the intended smooth fly-in. Giving
+   #map_container an explicit height closes that gap so the container is
+   correctly sized on its very first paint. */
+#map_container { height: 100%; }
+
 /* The swipe-compare drag handle (.compare-swiper-vertical, a 60px circle
    centered on the divider line) protrudes past #compare_map's own right
    edge once the divider is dragged near the far right -- its radius, not

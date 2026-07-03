@@ -6,7 +6,7 @@ Compares the base-year transit network in the Wasatch Front regional travel dema
 
 The regional travel demand model represents transit service (routes, stops, and line-haul network) for a defined base year. GTFS (General Transit Feed Specification) feeds published by the region's transit agency describe the same service as actually operated. This repo brings both datasets into an R + [mapgl](https://walker-data.com/mapgl/) (MapLibre GL JS) Shiny app so route alignment and coverage differences can be inspected visually.
 
-Comparison here is **visual validation**, not automated route matching: the TDM geodatabase currently only has a placeholder subset of the network (rail + BRT), with local bus routes expected to be added later, so there's no attempt to programmatically match TDM lines to GTFS routes or compute coverage gaps in code.
+Comparison here is **visual validation**, not automated route matching: there's no attempt to programmatically match TDM lines to GTFS routes or compute coverage gaps in code.
 
 ## Repository contents
 
@@ -15,7 +15,7 @@ Comparison here is **visual validation**, not automated route matching: the TDM 
 - `R/tdm_pipeline.R` — the shared TDM extraction pipeline: reads the transit line/stop layers out of the zipped file geodatabase, discovering transit groups dynamically (via `CITILABS_TRANSITGROUPS`) so it keeps working as more are added. Like GTFS, `app.R` calls it live at startup — no pre-baked/cached geojson to keep in sync.
 - `_data/gtfs/` — GTFS snapshots (original, unmodified zip downloads), one per feed publication date. This is the only GTFS data committed to the repo — no derived/processed copies.
 - `_data/tdm/` — TDM transit network:
-  - `WFv1000_MasterNet_20260430.gdb.zip` — the model's zipped file geodatabase (read via GDAL's `/vsizip/`), currently a **placeholder subset**: only `rail_2023` (5 lines) and `wfrc_brt_2023` (1 line) transit groups exist for the 2023 base year (local bus, expected: hundreds of routes, hasn't been added yet). The gdb also has 2055 forecast-scenario groups (`rail_2055UF`, `wfrc_brt_2055UF`, `wfrc_core_2055UF`); the app defaults to 2023 only since comparing a forecast scenario against present-day GTFS isn't meaningful, but the forecast groups stay selectable. This is the only TDM data committed to the repo — no derived/processed copies (TDM upload support, mirroring GTFS's, is planned but not yet implemented).
+  - `PS_RTP_Transit_Stops.zip` — the model's zipped file geodatabase (read via GDAL's `/vsizip/` at the nested path `PS_RTP_Transit_Stops.zip/PS_RTP_Transit_Stops/WFv1000_MasterNet_20260430.gdb` — the `.gdb` sits one folder deeper in this export than the previous one). Eight 2023 base-year transit groups (`rail_2023`, `wfrc_brt_2023`, `mag_brt_2023`, `mag_exp_2023`, `mag_lcl_2023`, `wfrc_og_lcl_2023`, `wfrc_sl_exp_2023`, `wfrc_sl_lcl_2023` — 80 routes total, including MAG/WFRC local and express bus), plus three 2055 forecast-scenario groups (`rail_2055UF`, `wfrc_brt_2055UF`, `wfrc_core_2055UF`). The app defaults to 2023 only since comparing a forecast scenario against present-day GTFS isn't meaningful, but the forecast groups stay selectable. This is the only TDM data committed to the repo — no derived/processed copies (TDM upload support, mirroring GTFS's, is planned but not yet implemented). The earlier `WFv1000_MasterNet_20260430.gdb.zip` (rail + one BRT line only, a placeholder subset) is superseded by this file.
 - `_brand/` — **git submodule** → [`WFRCAnalytics/wfrc-brand`](https://github.com/WFRCAnalytics/wfrc-brand), WFRC's official brand.yml (colors, fonts, logos). `app.R` points `bs_theme(brand = ...)` directly at `_brand/_extensions/wfrc-brand/brand.yml` (that repo is a Quarto-extension layout, not a root-level `_brand.yml`, so bslib's auto-discovery won't find it on its own) and serves the logo PNGs via `addResourcePath()` without copying them. See **Setup** below — this directory is empty until the submodule is initialized.
 - `gtfs-vs-tdm.qgz` — earlier QGIS project; superseded by the Shiny app above (kept for reference).
 
@@ -48,7 +48,7 @@ If deploying this app (Posit Connect, shinyapps.io, etc.), make sure the submodu
 ## Workflow
 
 1. Download/refresh a GTFS feed into `_data/gtfs/` — no separate processing step needed, the app reads the zips directly and reprocesses on demand.
-2. Update `_data/tdm/WFv1000_MasterNet_20260430.gdb.zip` with the latest model export — no separate processing step needed here either.
+2. Update `_data/tdm/PS_RTP_Transit_Stops.zip` with the latest model export — no separate processing step needed here either.
 3. Run the app (`shiny::runApp()`). Every setting is in the sidebar from the start — pick a GTFS source (saved snapshot / upload / feed URL), TDM year and line type, what each side shows, and Overlay or Swipe comparison mode — then visually compare route alignment and stop coverage between the two datasets.
 
 ## Requirements
