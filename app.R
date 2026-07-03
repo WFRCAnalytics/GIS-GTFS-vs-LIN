@@ -586,17 +586,95 @@ server <- function(input, output, session) {
     else maplibreOutput("map", height = "100%")
   })
 
+  # Overlay mode's initial view is deliberately just the basemap -- no
+  # `bounds` argument means maplibre() falls back to its own default
+  # (center = c(0, 0), zoom = 0, projection = "globe"), a full-world view
+  # that doesn't depend on any live per-session GTFS/TDM data at all, so it
+  # renders the instant the session connects instead of leaving the panel
+  # blank for the ~10-15s the live data pipeline takes. The actual layers
+  # and a fly-in to the GTFS network's bounds happen once via a proxy, as
+  # soon as that live data is ready -- see the bootstrap observer below.
   output$map <- renderMaplibre({
     req(compare_mode() == "overlay")
     isolate({
-      maplibre(style = carto_style(current_basemap()), bounds = initial_gtfs_routes_sf) |>
+      maplibre(style = carto_style(current_basemap()))
+    })
+  })
+
+  # TRUE once the initial layer-add + fly-to-bounds has happened for the
+  # *current* overlay map widget. Reset to FALSE whenever a fresh widget is
+  # about to exist (entering overlay mode, e.g. returning from swipe mode
+  # rebuilds output$map_container's DOM from scratch client-side) so the
+  # bootstrap runs again for that new widget instead of being permanently
+  # skipped after the first time this session ever bootstrapped.
+  map_bootstrapped <- reactiveVal(FALSE)
+  observeEvent(compare_mode(), {
+    if (compare_mode() == "overlay") map_bootstrapped(FALSE)
+  })
+  # Guard for anything that manipulates layers that only exist after
+  # bootstrap: always ready in swipe mode (output$compare_map isolate()s a
+  # full build with real data every time it renders, no interim empty
+  # state), only ready in overlay mode once map_bootstrapped() is TRUE.
+  layers_ready <- reactive(compare_mode() != "overlay" || map_bootstrapped())
+
+  # Adds the real layers + flies into the GTFS network's bounds once the
+  # live data is ready. Also waits on input$map_ready -- a signal
+  # www/app.js sends only once the client has actually finished creating
+  # the MapLibre map instance for the *current* widget and it has fired
+  # its own 'load' event. Without that gate, this observer's proxy
+  # messages can arrive before the client has registered mapgl's proxy
+  # message handler for a freshly (re)created widget -- confirmed via
+  # direct inspection: the message is silently dropped in that case (no
+  # widget found yet), with no error and no retry, permanently losing the
+  # layers for that session.
+  #
+  # This is observeEvent() with every input bundled into one eventExpr,
+  # deliberately NOT observe() + req() early-exits. req() failing partway
+  # through an observe() block means the expressions after it never get
+  # evaluated *that run* -- and Shiny only tracks dependencies on what was
+  # actually read on the most recent run, so a short-circuited run silently
+  # narrows (or entirely drops) this observer's subscriptions. Confirmed the
+  # hard way: after the first successful bootstrap, this observer's own
+  # write to map_bootstrapped(TRUE) re-triggers it once more, that second
+  # run fails the very first req() and exits before ever reading
+  # input$map_ready again -- permanently dropping the subscription to it,
+  # so returning to overlay mode from swipe mode never re-bootstrapped.
+  # Bundling everything into eventExpr forces it to always be evaluated in
+  # full, so the dependency list never shrinks; the handler uses plain
+  # if/return() to skip work instead.
+  #
+  # last_bootstrap_ready tracks which input$map_ready timestamp was already
+  # consumed. input$map_ready itself doesn't get cleared between widgets --
+  # it keeps its last value until the client sends a genuinely new one --
+  # so on a return trip to overlay mode, this observer's very first re-check
+  # fires with map_bootstrapped() already reset to FALSE but map_ready()
+  # still holding the *previous* widget's now-stale timestamp, and would
+  # otherwise race ahead of the new widget's actual creation exactly like
+  # the original bug. Requiring a strictly newer timestamp forces it to
+  # wait for the new widget's own signal instead of reusing the old one.
+  last_bootstrap_ready <- reactiveVal(0)
+  observeEvent(
+    list(compare_mode(), map_bootstrapped(), input$map_ready,
+         gtfs_routes_sf(), gtfs_stops_sf(), tdm_routes_filtered(), tdm_stops_filtered()),
+    {
+      if (compare_mode() != "overlay" || map_bootstrapped()) return()
+      if (is.null(input$map_ready) || input$map_ready <= last_bootstrap_ready()) return()
+      if (is.null(gtfs_routes_sf()) || is.null(gtfs_stops_sf()) ||
+          is.null(tdm_routes_filtered()) || is.null(tdm_stops_filtered())) {
+        return()
+      }
+      maplibre_proxy("map") |>
         add_tdm_layers(tdm_routes_filtered(), tdm_stops_filtered(),
                         lines_visibility = tdm_lines_vis(), stops_visibility = tdm_stops_vis()) |>
         add_gtfs_layers(gtfs_routes_sf(), gtfs_stops_sf(),
                          lines_visibility = gtfs_lines_vis(), stops_visibility = gtfs_stops_vis(),
-                         labels_visibility = gtfs_labels_vis())
-    })
-  })
+                         labels_visibility = gtfs_labels_vis()) |>
+        fit_bounds(initial_gtfs_routes_sf, animate = TRUE)
+      last_bootstrap_ready(input$map_ready)
+      map_bootstrapped(TRUE)
+    },
+    ignoreNULL = FALSE
+  )
 
   output$compare_map <- renderMaplibreCompare({
     req(compare_mode() == "swipe")
@@ -613,25 +691,35 @@ server <- function(input, output, session) {
     })
   })
 
+  # req(layers_ready()) on all of these -- in overlay mode the layers they
+  # target don't exist until the bootstrap observer above has added them;
+  # without the guard a fast interaction during the ~10-15s initial load
+  # (e.g. changing the GTFS date before the first fetch even finishes)
+  # would call set_source()/set_layout_property() on a nonexistent layer.
   observeEvent(gtfs_routes_sf(), {
+    req(layers_ready())
     gtfs_proxy() |> set_source(layer_id = "gtfs_routes", source = gtfs_routes_sf())
   }, ignoreInit = TRUE)
 
   observeEvent(gtfs_stops_sf(), {
+    req(layers_ready())
     gtfs_proxy() |>
       set_source(layer_id = "gtfs_stops", source = gtfs_stops_sf()) |>
       set_source(layer_id = "gtfs_stop_labels", source = gtfs_stops_sf())
   }, ignoreInit = TRUE)
 
   observeEvent(tdm_routes_filtered(), {
+    req(layers_ready())
     tdm_proxy() |> set_source(layer_id = "tdm_routes", source = tdm_routes_filtered())
   }, ignoreInit = TRUE)
 
   observeEvent(tdm_stops_filtered(), {
+    req(layers_ready())
     tdm_proxy() |> set_source(layer_id = "tdm_stops", source = tdm_stops_filtered())
   }, ignoreInit = TRUE)
 
   observeEvent(list(input$gtfs_display, input$gtfs_enabled), {
+    req(layers_ready())
     p <- gtfs_proxy() |>
       set_layout_property("gtfs_routes", "visibility", gtfs_lines_vis()) |>
       set_layout_property("gtfs_stops", "visibility", gtfs_stops_vis()) |>
@@ -646,6 +734,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   observeEvent(list(input$tdm_display, input$tdm_enabled), {
+    req(layers_ready())
     p <- tdm_proxy() |>
       set_layout_property("tdm_routes", "visibility", tdm_lines_vis()) |>
       set_layout_property("tdm_stops", "visibility", tdm_stops_vis())

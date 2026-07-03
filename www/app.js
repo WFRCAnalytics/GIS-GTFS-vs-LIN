@@ -155,4 +155,50 @@
   });
 
   Shiny.inputBindings.register(ChipGroupInputBinding, "app.chipGroupInput");
+
+  /* ---------------------------------------------------------------------
+   * "Map is actually ready" signal for the overlay map. Its widget starts
+   * as a bare basemap (no bounds/layers -- see app.R's output$map) so it
+   * renders before the live GTFS/TDM data does; the layers + fly-to-bounds
+   * are then added via a proxy once that data is ready (app.R's bootstrap
+   * observer). But there's no guarantee the client has finished creating
+   * the MapLibre map instance and registering mapgl's own proxy message
+   * handler by the time that data-ready proxy message is sent -- if it
+   * arrives first, mapgl's handler silently drops it (no widget/map found
+   * yet) with no error and no retry, permanently losing the layers. Report
+   * back to Shiny once the map instance genuinely exists and has fired its
+   * own 'load' event, so the R side can gate the bootstrap on
+   * req(input$map_ready) instead of racing it.
+   *
+   * Shiny's own "shiny:value" event fires as soon as a new output value is
+   * *received*, which is BEFORE the htmlwidget binding's onValueChange has
+   * actually run and created the MapLibre map instance (confirmed by
+   * direct inspection of Shiny's receiveOutput(): the event is triggered,
+   * then onValueChange is awaited) -- HTMLWidgets.find("#map").getMap()
+   * is reliably null at that exact instant. Use the event only as the
+   * trigger to start a short poll for the map instance actually existing,
+   * rather than assuming it's there yet.
+   * ------------------------------------------------------------------- */
+  $(document).on("shiny:value", function (event) {
+    if (!event.target || event.target.id !== "map") return;
+
+    function waitForMap(attemptsLeft) {
+      var widget = window.HTMLWidgets && HTMLWidgets.find && HTMLWidgets.find("#map");
+      var map = widget && widget.getMap && widget.getMap();
+      if (map) {
+        if (map.loaded()) {
+          Shiny.setInputValue("map_ready", Date.now());
+        } else {
+          map.once("load", function () {
+            Shiny.setInputValue("map_ready", Date.now());
+          });
+        }
+        return;
+      }
+      if (attemptsLeft > 0) {
+        setTimeout(function () { waitForMap(attemptsLeft - 1); }, 100);
+      }
+    }
+    waitForMap(50); // up to ~5s
+  });
 })();
