@@ -103,13 +103,26 @@ tdm_data <- build_tdm_layers(tdm_gdb_path)
 tdm_routes_sf <- tdm_data$routes_sf
 tdm_stops_sf <- tdm_data$stops_sf
 
-# tdm_group (e.g. "rail_2023", "wfrc_brt_2055UF") bundles year + line type
-# together; split them out so each can be its own control.
+# tdm_group (e.g. "rail_2023", "wfrc_brt_2055UF", "wfrc_sl_lcl_2023") bundles
+# agency/county + line type + year together in one underscore-delimited
+# string. We only want to split out mode + year as controls -- the
+# agency/county part (e.g. "wfrc_og" vs "wfrc_sl" vs "mag", all of which
+# carry local-bus groups) is never its own filter, so groups from different
+# agencies sharing the same mode+year fall into the same bucket automatically
+# once tdm_mode is matched on (input$tdm_modes filters by mode, not by the
+# raw group string).
+#
+# Matched on whole underscore-delimited tokens (`(^|_)code(_|$)`), not a bare
+# grepl(pattern, group) substring check, so a code can't accidentally match
+# inside an unrelated token as more groups get added later.
 parse_tdm_mode <- function(group) {
+  token <- function(code) paste0("(^|_)", code, "(_|$)")
   case_when(
-    grepl("rail", group, ignore.case = TRUE) ~ "rail",
-    grepl("brt", group, ignore.case = TRUE) ~ "brt",
-    grepl("core", group, ignore.case = TRUE) ~ "core",
+    grepl(token("rail"), group, ignore.case = TRUE) ~ "rail",
+    grepl(token("brt"), group, ignore.case = TRUE) ~ "brt",
+    grepl(token("core"), group, ignore.case = TRUE) ~ "core",
+    grepl(token("exp"), group, ignore.case = TRUE) ~ "express",
+    grepl(token("lcl"), group, ignore.case = TRUE) ~ "local",
     TRUE ~ "other"
   )
 }
@@ -129,10 +142,13 @@ tdm_routes_sf$tdm_year <- parse_tdm_year(tdm_routes_sf$tdm_group)
 tdm_stops_sf$tdm_mode <- parse_tdm_mode(tdm_stops_sf$tdm_group)
 tdm_stops_sf$tdm_year <- parse_tdm_year(tdm_stops_sf$tdm_group)
 
-# WFRC's own Wasatch Choice transit colors (wc-light-rail/wc-brt); "core"
-# (local bus) has no official swatch yet since that network isn't in the TDM
-# data, so it borrows a distinct purple from their broader Core Palette.
-tdm_mode_colors <- c(rail = "#3762ad", brt = "#24949a", core = "#553c8f")
+# rail/brt use WFRC's own Wasatch Choice transit colors (wc-light-rail/
+# wc-brt); core/express/local have no official Wasatch Choice swatch, so
+# they borrow distinct colors from WFRC's broader Core Palette instead.
+tdm_mode_colors <- c(
+  rail = "#3762ad", brt = "#24949a", core = "#553c8f",
+  express = "#ea7b00", local = "#007426"
+)
 default_tdm_mode_color <- "#808080"
 tdm_routes_sf$tdm_color <- unname(ifelse(
   tdm_routes_sf$tdm_mode %in% names(tdm_mode_colors),
@@ -145,7 +161,11 @@ all_tdm_years <- sort(unique(tdm_routes_sf$tdm_year))
 # base year -- default to base-year only so we're not comparing a future
 # planning scenario against present-day GTFS by default.
 default_tdm_year <- if ("2023" %in% all_tdm_years) "2023" else all_tdm_years[1]
-all_tdm_modes <- intersect(c("brt", "rail", "core"), unique(tdm_routes_sf$tdm_mode))
+# "other" (anything parse_tdm_mode() couldn't classify) is deliberately left
+# out -- fixed order rather than unique(tdm_mode) so the "Line types" chips
+# always list highest-to-lowest capacity, regardless of which modes happen
+# to be present in a given gdb.
+all_tdm_modes <- intersect(c("rail", "brt", "core", "express", "local"), unique(tdm_routes_sf$tdm_mode))
 
 # A small uppercase field label (Source / Year / Show / ...). Deliberately a
 # neutral gray tier (see .field-label in www/custom.css), one step below the
