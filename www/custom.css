@@ -157,8 +157,18 @@
 .hdr-switch .form-check-input { margin-left: 0; }
 
 /* --- Field wrapper + label ---------------------------------------------- */
-.sb-field { margin-bottom: 9px; }
-.sb-field:last-child { margin-bottom: 0; }
+.sb-field { margin-bottom: 12px; }
+/* Scoped to a DIRECT child of the card, not a bare :last-child -- the GTFS
+   Source conditionalPanel()s (Snapshot / Upload / Feed URL) each wrap a
+   single .sb-field in their own shiny-panel-conditional div, which makes
+   that field trivially both first- and last-child of ITS wrapper too. A
+   bare .sb-field:last-child matched those as well, silently zeroing the
+   gap before the next field (e.g. Snapshot's dropdown sitting flush
+   against "Show" below it) -- confirmed via computed-style inspection
+   (margin-bottom: 0px on a field that visually reads as cramped).
+   Restricting to .sb-card's own direct children only zeroes the margin on
+   the card's true last field. */
+.sb-card > .sb-field:last-child { margin-bottom: 0; }
 .field-label {
   display: block;
   font-family: 'Inter', sans-serif;
@@ -268,9 +278,21 @@
   top: 0; left: 0; bottom: 0;
   width: 0;
   background: var(--accent, #52b6d5);
-  border-radius: inherit;
+  /* Flush rectangle, not border-radius: inherit -- inheriting the
+     container's own radius rounded ALL FOUR corners of the indicator
+     regardless of which segment was active, so selecting a middle segment
+     (e.g. "Upload") showed a rounded pill floating disconnected inside the
+     boxy row, clashing with the dead-straight divider lines between
+     segments. .segmented's own border-radius + overflow: hidden already
+     clips a plain rectangle into a rounded shape wherever it actually
+     reaches the container's edge (first/last segment active), so this
+     reads as flush either way without needing its own rounding. The
+     Comparison strip's pill-shaped variant restores full rounding below,
+     since there every segment IS an edge segment. */
+  border-radius: 0;
   z-index: 0;
 }
+.compare-row .segmented-indicator { border-radius: inherit; }
 /* No transition until the first real layout pass has positioned the
    indicator, so it doesn't visibly sweep in from the top-left on load. */
 .segmented.segmented-ready .segmented-indicator {
