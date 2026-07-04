@@ -38,6 +38,14 @@ brand_data$color$foreground <- flatten_light_dark(brand_data$color$foreground)
 brand_data$color$background <- flatten_light_dark(brand_data$color$background)
 brand_data$typography$headings$color <- flatten_light_dark(brand_data$typography$headings$color)
 
+# Shiny serves www/ as plain static files with no cache-busting of its own,
+# so a browser that already has app.js/custom.css cached from an earlier
+# visit can keep using the stale copy after either file changes -- a real
+# risk during active iteration on this app. Tag each with its own mtime as a
+# query string so a changed file gets a new URL and the browser is forced to
+# refetch it, without needing a hard refresh.
+asset_version <- function(path) as.integer(file.info(path)$mtime)
+
 gtfs_raw_dir <- "_data/gtfs"
 # The .gdb sits one folder deeper in this zip than the old export (a
 # "PS_RTP_Transit_Stops/" wrapper folder inside the zip, ahead of the .gdb
@@ -202,6 +210,27 @@ stop_cluster_options <- function(color) {
 gtfs_cluster_options <- function() stop_cluster_options("#3E7C8B")
 tdm_cluster_options <- function() stop_cluster_options("#333333")
 
+# Works around a confirmed upstream mapgl bug: add_circle_layer(cluster_options
+# = ...) applies circle_opacity/circle_stroke_color/circle_stroke_width to the
+# generated "<id>-clusters" layer by mutating map$x$layers[[...]]$paint *after*
+# add_layer() has already fired -- for a real widget object that mutation lands
+# before the widget's own data is ever serialized to the client, so it works,
+# but for a proxy (every call in this app -- the overlay map's clusters are
+# always added via maplibre_proxy("map") once live data is ready, see the
+# bootstrap observer) add_layer() has already sent its one-shot proxy message
+# by the time that mutation happens, so it has no effect at all: verified live
+# via map.getPaintProperty("gtfs_stops-clusters", "circle-opacity") returning
+# undefined despite cluster_options(circle_opacity = 0.85) being set. Re-apply
+# those three properties with set_paint_property(), which -- unlike
+# add_circle_layer()'s internal mutation -- dispatches its own real proxy
+# message and works correctly for both proxies and widgets.
+apply_cluster_paint_workaround <- function(map, id, opts) {
+  map |>
+    set_paint_property(paste0(id, "-clusters"), "circle-opacity", opts$circle_opacity) |>
+    set_paint_property(paste0(id, "-clusters"), "circle-stroke-color", opts$circle_stroke_color) |>
+    set_paint_property(paste0(id, "-clusters"), "circle-stroke-width", opts$circle_stroke_width)
+}
+
 # GTFSx-style layers: routes colored by route_color, stops colored (ring) by
 # their primary serving route and clustered below zoom 10, labels gated to
 # zoom 14+. `cluster` is forced off in swipe mode -- mapgl's compare widget
@@ -235,6 +264,9 @@ add_gtfs_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visibl
     visibility = stops_visibility,
     cluster_options = if (cluster) gtfs_cluster_options() else NULL
   )
+  if (cluster) {
+    map <- apply_cluster_paint_workaround(map, "gtfs_stops", gtfs_cluster_options())
+  }
 
   map |>
     add_symbol_layer(
@@ -278,6 +310,9 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
     visibility = stops_visibility,
     cluster_options = if (cluster) tdm_cluster_options() else NULL
   )
+  if (cluster) {
+    map <- apply_cluster_paint_workaround(map, "tdm_stops", tdm_cluster_options())
+  }
 
   map |>
     add_legend(
@@ -331,11 +366,11 @@ ui <- page_navbar(
         "&family=Fira+Code:wght@400;500;700",
         "&display=swap"
       )),
-      tags$link(rel = "stylesheet", href = "custom.css"),
+      tags$link(rel = "stylesheet", href = paste0("custom.css?v=", asset_version("www/custom.css"))),
       # Registers the custom Shiny.InputBinding components (segmented
       # control, chip group) used throughout the sidebar -- see
       # R/custom_inputs.R for the markup they bind to.
-      tags$script(src = "app.js")
+      tags$script(src = paste0("app.js?v=", asset_version("www/app.js")))
     ),
     busyIndicatorOptions(spinner_type = "ring", spinner_color = "#52b6d5")
   ),
@@ -386,11 +421,13 @@ ui <- page_navbar(
     layer_card(section_tint$`wc-light-rail`,
       section_header("map", "TDM", section_tint$`wc-light-rail`,
                      control = input_switch("tdm_enabled", NULL, value = TRUE)),
-      sb_field("Year",
-        selectInput("tdm_year", NULL, choices = all_tdm_years, selected = default_tdm_year)),
-      sb_field("Line types",
-        selectInput("tdm_modes", NULL, choices = all_tdm_modes,
-                    selected = all_tdm_modes, multiple = TRUE)),
+      div(class = "sb-field-row",
+        sb_field("Year",
+          selectInput("tdm_year", NULL, choices = all_tdm_years, selected = default_tdm_year)),
+        sb_field("Line types",
+          selectInput("tdm_modes", NULL, choices = all_tdm_modes,
+                      selected = all_tdm_modes, multiple = TRUE))
+      ),
       sb_field("Show",
         chip_group_input("tdm_display", choices = lines_stops_choices, selected = c("lines", "stops"),
                          icons = lines_stops_icons, label = "TDM layers shown"),
@@ -406,7 +443,25 @@ ui <- page_navbar(
     title = "Map",
     div(
       style = "position: relative; height: 100%;",
-      uiOutput("map_container"),
+      # Both outputs sit directly in the static UI (not behind a
+      # uiOutput()+renderUI() server round trip) so the map's real DOM
+      # element -- and therefore its final, correctly-sized container --
+      # exists from the very first paint, before Shiny's websocket has even
+      # connected. conditionalPanel()'s show/hide is a client-side JS
+      # condition (no server trip either), toggled off input.compare_swipe.
+      # "!= 'swipe'" rather than "== 'overlay'" so the overlay map defaults
+      # to visible for the brief instant before compare_swipe's custom input
+      # binding reports its initial value (undefined != 'swipe' is true).
+      conditionalPanel(
+        "input.compare_swipe != 'swipe'",
+        style = "height: 100%;",
+        maplibreOutput("map", height = "100%")
+      ),
+      conditionalPanel(
+        "input.compare_swipe == 'swipe'",
+        style = "height: 100%;",
+        maplibreCompareOutput("compare_map", height = "100%")
+      ),
       div(
         class = "map-badge position-absolute top-0 start-0 m-3",
         uiOutput("comparison_summary", inline = TRUE)
@@ -595,36 +650,33 @@ server <- function(input, output, session) {
     else maplibre_proxy("map")
   })
 
-  output$map_container <- renderUI({
-    if (compare_mode() == "swipe") maplibreCompareOutput("compare_map", height = "100%")
-    else maplibreOutput("map", height = "100%")
-  })
-
-  # Overlay mode's initial view is deliberately just the basemap -- no
+  # The overlay map is a session-long singleton, built exactly once. No
   # `bounds` argument means maplibre() falls back to its own default
   # (center = c(0, 0), zoom = 0, projection = "globe"), a full-world view
   # that doesn't depend on any live per-session GTFS/TDM data at all, so it
   # renders the instant the session connects instead of leaving the panel
-  # blank for the ~10-15s the live data pipeline takes. The actual layers
-  # and a fly-in to the GTFS network's bounds happen once via a proxy, as
-  # soon as that live data is ready -- see the bootstrap observer below.
+  # blank for the ~10-15s the live data pipeline takes. Every reactive
+  # read inside is isolate()d (current_basemap() included -- dark-mode
+  # style changes go through the proxy `set_style()` observer below
+  # instead), so this render function has no tracked dependencies at all
+  # and Shiny only ever calls it once, for the life of the session. From
+  # here on, the map is *only* ever touched through maplibre_proxy("map")
+  # -- add_gtfs_layers()/add_tdm_layers()/fit_bounds() below once the live
+  # data is ready, set_source()/set_layout_property()/set_style() as
+  # filters and dark mode change -- never re-rendered. #map's <div> is
+  # static in the UI (see the "Map" nav_panel) and conditionalPanel()
+  # only ever hides/shows it, so switching to swipe mode and back leaves
+  # this same instance, with whatever pan/zoom/layers it already has,
+  # exactly as the user left it -- there's nothing to re-bootstrap.
   output$map <- renderMaplibre({
-    req(compare_mode() == "overlay")
     isolate({
       maplibre(style = carto_style(current_basemap()))
     })
   })
 
-  # TRUE once the initial layer-add + fly-to-bounds has happened for the
-  # *current* overlay map widget. Reset to FALSE whenever a fresh widget is
-  # about to exist (entering overlay mode, e.g. returning from swipe mode
-  # rebuilds output$map_container's DOM from scratch client-side) so the
-  # bootstrap runs again for that new widget instead of being permanently
-  # skipped after the first time this session ever bootstrapped.
+  # TRUE once the one-time layer-add + fly-to-bounds bootstrap (below) has
+  # happened, for the life of the session.
   map_bootstrapped <- reactiveVal(FALSE)
-  observeEvent(compare_mode(), {
-    if (compare_mode() == "overlay") map_bootstrapped(FALSE)
-  })
   # Guard for anything that manipulates layers that only exist after
   # bootstrap: always ready in swipe mode (output$compare_map isolate()s a
   # full build with real data every time it renders, no interim empty
@@ -632,47 +684,25 @@ server <- function(input, output, session) {
   layers_ready <- reactive(compare_mode() != "overlay" || map_bootstrapped())
 
   # Adds the real layers + flies into the GTFS network's bounds once the
-  # live data is ready. Also waits on input$map_ready -- a signal
-  # www/app.js sends only once the client has actually finished creating
-  # the MapLibre map instance for the *current* widget and it has fired
-  # its own 'load' event. Without that gate, this observer's proxy
-  # messages can arrive before the client has registered mapgl's proxy
-  # message handler for a freshly (re)created widget -- confirmed via
-  # direct inspection: the message is silently dropped in that case (no
-  # widget found yet), with no error and no retry, permanently losing the
-  # layers for that session.
-  #
-  # This is observeEvent() with every input bundled into one eventExpr,
-  # deliberately NOT observe() + req() early-exits. req() failing partway
-  # through an observe() block means the expressions after it never get
-  # evaluated *that run* -- and Shiny only tracks dependencies on what was
-  # actually read on the most recent run, so a short-circuited run silently
-  # narrows (or entirely drops) this observer's subscriptions. Confirmed the
-  # hard way: after the first successful bootstrap, this observer's own
-  # write to map_bootstrapped(TRUE) re-triggers it once more, that second
-  # run fails the very first req() and exits before ever reading
-  # input$map_ready again -- permanently dropping the subscription to it,
-  # so returning to overlay mode from swipe mode never re-bootstrapped.
-  # Bundling everything into eventExpr forces it to always be evaluated in
-  # full, so the dependency list never shrinks; the handler uses plain
-  # if/return() to skip work instead.
-  #
-  # last_bootstrap_ready tracks which input$map_ready timestamp was already
-  # consumed. input$map_ready itself doesn't get cleared between widgets --
-  # it keeps its last value until the client sends a genuinely new one --
-  # so on a return trip to overlay mode, this observer's very first re-check
-  # fires with map_bootstrapped() already reset to FALSE but map_ready()
-  # still holding the *previous* widget's now-stale timestamp, and would
-  # otherwise race ahead of the new widget's actual creation exactly like
-  # the original bug. Requiring a strictly newer timestamp forces it to
-  # wait for the new widget's own signal instead of reusing the old one.
-  last_bootstrap_ready <- reactiveVal(0)
+  # live data is ready, exactly once for the life of the session. Also
+  # waits on input$map_ready -- a signal www/app.js sends once the client
+  # has confirmed the MapLibre instance exists and has fired its own
+  # 'load' event. Without that gate, this observer's proxy messages can
+  # arrive before the client has registered mapgl's proxy message handler
+  # -- confirmed via direct inspection: the message is silently dropped in
+  # that case (no widget found yet), with no error and no retry,
+  # permanently losing the layers for that session. Runs regardless of
+  # which mode the user is currently viewing -- add_layer()/fit_bounds()
+  # proxy calls apply to the map's internal state whether or not its
+  # container is currently visible, so if the user is looking at swipe
+  # mode when the live data finishes, the overlay map is already fully
+  # ready by the time they switch back instead of popping in late.
   observeEvent(
-    list(compare_mode(), map_bootstrapped(), input$map_ready,
+    list(map_bootstrapped(), input$map_ready,
          gtfs_routes_sf(), gtfs_stops_sf(), tdm_routes_filtered(), tdm_stops_filtered()),
     {
-      if (compare_mode() != "overlay" || map_bootstrapped()) return()
-      if (is.null(input$map_ready) || input$map_ready <= last_bootstrap_ready()) return()
+      if (map_bootstrapped()) return()
+      if (is.null(input$map_ready)) return()
       if (is.null(gtfs_routes_sf()) || is.null(gtfs_stops_sf()) ||
           is.null(tdm_routes_filtered()) || is.null(tdm_stops_filtered())) {
         return()
@@ -684,7 +714,6 @@ server <- function(input, output, session) {
                          lines_visibility = gtfs_lines_vis(), stops_visibility = gtfs_stops_vis(),
                          labels_visibility = gtfs_labels_vis()) |>
         fit_bounds(initial_gtfs_routes_sf, animate = TRUE)
-      last_bootstrap_ready(input$map_ready)
       map_bootstrapped(TRUE)
     },
     ignoreNULL = FALSE

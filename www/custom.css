@@ -54,6 +54,30 @@
   background: #52b6d5; border-radius: 3px;
 }
 
+/* bslib reserves space above .sidebar-content for the floating collapse
+   toggle button (.collapse-toggle) via --_padding-icon, which it derives as
+   icon-button-size * 1.5 -- 2rem * 1.5 = 48px by default. That's sized for
+   bslib's own default control density; next to this sidebar's much tighter
+   rhythm (9px field gaps, 32px controls) it reads as a disproportionate gap
+   at the very top, with the toggle icon floating in the middle of it. Using
+   bslib's own documented custom properties for this (rather than overriding
+   the internal --_padding-icon or .sidebar-content padding-top directly)
+   shrinks the toggle button and its reserved clearance together,
+   proportionally, instead of leaving a full-size button with barely any
+   breathing room under it. Confirmed via bslib's compiled components.css --
+   .bslib-sidebar-layout{--_icon-size: var(--bslib-sidebar-icon-size, 1rem);
+   --_icon-button-size: var(--bslib-sidebar-icon-button-size, calc(var(
+   --_icon-size) * 2)); --_padding-icon: calc(var(--_icon-button-size) *
+   1.5); ...} -- these three are all computed on .bslib-sidebar-layout
+   itself (the wrapper *around* .sidebar.app-sidebar, not that element
+   itself), so the override has to live on an ancestor of it, not on
+   .app-sidebar -- a custom property set on a descendant can't flow back up
+   to a parent's own var() lookup. */
+:root {
+  --bslib-sidebar-icon-size: .8rem;
+  --bslib-sidebar-icon-button-size: 1.6rem;
+}
+
 /* The sidebar body is a control panel — set a compact base scale for it and
    let explicit sizes below build the type hierarchy. */
 .app-sidebar {
@@ -61,10 +85,14 @@
   padding-top: .15rem;
 }
 
-/* Section blocks: consistent rhythm on an 8px grid. The Comparison strip is a
+/* Section blocks: consistent rhythm on a tightened grid (originally 8px,
+   compressed further -- see the 2026-07-03 compaction pass note below the
+   .sb-field rules -- since the full sidebar content taller than ~700px of
+   actual browser viewport meant real scrolling for anyone without a large
+   monitor, not just a hypothetical small one). The Comparison strip is a
    plain (non-card) mode control at the top; the two datasets below are real
    "layer cards" (see .sb-card). */
-.sb-section { padding: 12px 0 14px; }
+.sb-section { padding: 8px 0 10px; }
 .sb-section:first-child { padding-top: 2px; }
 /* Faint divider under the top (non-card) Comparison strip, separating the
    mode control from the layer cards — no hairline between the cards
@@ -79,8 +107,8 @@
    color-keyed to its map layer rather than a flat form section. */
 .sb-card {
   position: relative;
-  padding: 12px 13px 13px;
-  margin-top: 12px;
+  padding: 10px 12px 11px;
+  margin-top: 10px;
   border: 1px solid var(--wfrc-hair);
   border-left: 3px solid var(--accent);
   border-radius: 10px;
@@ -101,11 +129,11 @@
 .brand-icon { width: 1em; height: 1em; flex-shrink: 0; }
 
 /* --- Section header (icon tile + label, optional right-aligned switch) --- */
-.section-head { margin-bottom: 12px; min-height: 26px; }
+.section-head { margin-bottom: 9px; min-height: 24px; }
 .section-tile {
-  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: .78rem;
+  font-size: .74rem;
 }
 .section-label {
   font-family: 'Inter', sans-serif;
@@ -129,7 +157,7 @@
 .hdr-switch .form-check-input { margin-left: 0; }
 
 /* --- Field wrapper + label ---------------------------------------------- */
-.sb-field { margin-bottom: 12px; }
+.sb-field { margin-bottom: 9px; }
 .sb-field:last-child { margin-bottom: 0; }
 .field-label {
   display: block;
@@ -139,10 +167,25 @@
   letter-spacing: .04em;
   text-transform: uppercase;
   color: var(--wfrc-label);
-  margin-bottom: 5px;
+  margin-bottom: 4px;
   line-height: 1.2;
 }
 .field-label .fa, .field-label svg { color: var(--wfrc-label); }
+
+/* Two fields sharing one row (TDM's Year + Line types) -- a real layout
+   change, not just tighter spacing, since it removes a whole field's
+   height rather than shrinking one. Each .sb-field inside keeps its own
+   bottom margin for the row-to-next-field gap; only the side-by-side gap
+   comes from here. Asymmetric on purpose: Year only ever needs to fit a
+   4-6 character value ("2023"/"2055UF"), so it gets a narrow fixed share,
+   leaving Line types (a 3-tag multi-select, "brt"/"rail"/"core") the rest
+   of the row -- an even 50/50 split wrapped that multi-select's tags onto
+   a second line, which made the row *taller* than the two fields stacked
+   separately, defeating the whole point of combining them onto one row. */
+.sb-field-row { display: flex; gap: 10px; }
+.sb-field-row > .sb-field { min-width: 0; margin-bottom: 9px; }
+.sb-field-row > .sb-field:first-child { flex: 0 0 34%; }
+.sb-field-row > .sb-field:last-child { flex: 1 1 auto; }
 
 /* Kill Shiny's default control-group bottom margins; rhythm is owned by
    .sb-field / .sb-section instead. */
@@ -153,8 +196,8 @@
 .app-sidebar .form-select,
 .app-sidebar .form-control {
   font-size: 13px;
-  min-height: 34px;
-  padding: .3rem .6rem;
+  min-height: 32px;
+  padding: .26rem .55rem;
   border-radius: 8px;
   border-color: var(--bs-border-color);
 }
@@ -169,8 +212,8 @@
 /* selectize (multi-select for TDM Lines) matched to the same system */
 .app-sidebar .selectize-input {
   font-size: 13px;
-  min-height: 34px;
-  padding: .28rem .5rem;
+  min-height: 32px;
+  padding: .24rem .5rem;
   border-radius: 8px;
   border-color: var(--bs-border-color);
 }
@@ -244,7 +287,7 @@
   border: none;
   border-right: 1px solid var(--bs-border-color);
   margin: 0;
-  padding: .4rem .5rem;
+  padding: .32rem .5rem;
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 500;
@@ -255,7 +298,7 @@
   transition: color .15s ease;
 }
 .segmented-option:last-child { border-right: none; }
-.compare-row .segmented-option { flex: 0 0 auto; padding: .35rem 1.1rem; border-right: none; }
+.compare-row .segmented-option { flex: 0 0 auto; padding: .3rem 1.1rem; border-right: none; }
 .segmented-option:hover:not(.is-active) { color: var(--bs-emphasis-color); }
 .segmented-option.is-active { color: #fff; font-weight: 600; }
 .segmented-option:focus-visible { outline: 2px solid var(--accent, #52b6d5); outline-offset: -2px; z-index: 2; }
@@ -275,7 +318,7 @@
   border-radius: 999px;
   background: transparent;
   margin: 0;
-  padding: .26rem .7rem;
+  padding: .22rem .65rem;
   font-family: inherit;
   font-size: 12.5px; font-weight: 500;
   color: var(--wfrc-label); cursor: pointer;
@@ -390,24 +433,19 @@
    for the first part of the load. */
 #map, #compare_map { width: 100%; height: 100%; }
 
-/* #map_container (the uiOutput wrapping #map/#compare_map) has no explicit
-   height of its own -- its parent (the nav_panel's position:relative div)
-   has height:100%, and #map itself gets height:100% inline from
-   maplibreOutput(height="100%"), but a percentage height can't resolve
-   through a middle element that has no declared height at all, so
-   #map_container sits at its shrink-to-fit (near-zero) height until
-   something else forces a reflow. Since output$map now renders almost
-   immediately (see app.R -- the globe-view basemap doesn't wait on the
-   live data pipeline the way it used to), the map widget can initialize
-   while this height is still ambiguous, causing a visible small-then-
-   expands pop on load, and worse: fit_bounds()'s fly-to animation
-   computes its target camera position against whatever (wrong, tiny)
-   container size existed when it ran, then gets abruptly corrected once
-   the container's real size resolves and mapgl calls resize() -- reading
-   as an instant jump-cut instead of the intended smooth fly-in. Giving
-   #map_container an explicit height closes that gap so the container is
-   correctly sized on its very first paint. */
-#map_container { height: 100%; }
+/* The old #map_container (a uiOutput() wrapping #map/#compare_map, filled
+   in via a server-side renderUI()) is gone -- app.R now puts both
+   maplibreOutput("map")/maplibreCompareOutput("compare_map") directly in
+   the static UI behind conditionalPanel()s (client-side show/hide, keyed
+   off input.compare_swipe), specifically so the map's real container
+   exists and is correctly sized from the very first paint, with no server
+   round trip required first. Each conditionalPanel gets height:100% as an
+   inline style directly in app.R (not here) since that's the actual
+   percentage-height chain that needs to stay unbroken. www/app.js also
+   attaches a ResizeObserver once the MapLibre instance exists, to catch
+   any later container resize (e.g. bslib's fill layout still settling)
+   that htmlwidgets.js's own window-resize-only handling would otherwise
+   miss -- see the comment there for why that's needed on top of this. */
 
 /* The swipe-compare drag handle (.compare-swiper-vertical, a 60px circle
    centered on the divider line) protrudes past #compare_map's own right

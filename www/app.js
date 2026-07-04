@@ -157,27 +157,25 @@
   Shiny.inputBindings.register(ChipGroupInputBinding, "app.chipGroupInput");
 
   /* ---------------------------------------------------------------------
-   * "Map is actually ready" signal for the overlay map. Its widget starts
-   * as a bare basemap (no bounds/layers -- see app.R's output$map) so it
-   * renders before the live GTFS/TDM data does; the layers + fly-to-bounds
-   * are then added via a proxy once that data is ready (app.R's bootstrap
-   * observer). But there's no guarantee the client has finished creating
-   * the MapLibre map instance and registering mapgl's own proxy message
-   * handler by the time that data-ready proxy message is sent -- if it
-   * arrives first, mapgl's handler silently drops it (no widget/map found
-   * yet) with no error and no retry, permanently losing the layers. Report
-   * back to Shiny once the map instance genuinely exists and has fired its
-   * own 'load' event, so the R side can gate the bootstrap on
-   * req(input$map_ready) instead of racing it.
-   *
-   * Shiny's own "shiny:value" event fires as soon as a new output value is
-   * *received*, which is BEFORE the htmlwidget binding's onValueChange has
-   * actually run and created the MapLibre map instance (confirmed by
-   * direct inspection of Shiny's receiveOutput(): the event is triggered,
-   * then onValueChange is awaited) -- HTMLWidgets.find("#map").getMap()
-   * is reliably null at that exact instant. Use the event only as the
-   * trigger to start a short poll for the map instance actually existing,
-   * rather than assuming it's there yet.
+   * "Map is actually ready" signal for the overlay map. app.R's
+   * output$map has no tracked reactive dependencies, so it renders
+   * exactly once, for the life of the session -- a bare basemap (no
+   * bounds/layers) that doesn't wait on the live GTFS/TDM data. The real
+   * layers + fly-to-bounds are added via a proxy once that data is ready
+   * (app.R's bootstrap observer), and every later update (filters, dark
+   * mode) is also a proxy call -- the widget itself is never re-rendered.
+   * But there's no guarantee the client has finished creating the
+   * MapLibre map instance and registering mapgl's own proxy message
+   * handler by the time that first data-ready proxy message is sent -- if
+   * it arrives first, mapgl's handler silently drops it (no widget/map
+   * found yet) with no error and no retry, permanently losing the layers.
+   * Report back to Shiny once the map instance genuinely exists and has
+   * fired its own 'load' event, so the R side can gate the bootstrap on
+   * input$map_ready instead of racing it. Since this only ever needs to
+   * happen once per session (output$map only ever fires "shiny:value"
+   * once), a plain short poll is enough -- no need to reason about
+   * stale/replaced widget references from a second render, because there
+   * isn't one.
    * ------------------------------------------------------------------- */
   $(document).on("shiny:value", function (event) {
     if (!event.target || event.target.id !== "map") return;
@@ -187,12 +185,24 @@
       var map = widget && widget.getMap && widget.getMap();
       if (map) {
         watchContainerResize(event.target, map);
-        if (map.loaded()) {
+        var reported = false;
+        var reportReady = function () {
+          if (reported) return;
+          reported = true;
           Shiny.setInputValue("map_ready", Date.now());
+        };
+        if (map.loaded()) {
+          reportReady();
         } else {
-          map.once("load", function () {
-            Shiny.setInputValue("map_ready", Date.now());
-          });
+          map.once("load", reportReady);
+          // map may finish loading in the gap between the loaded() check
+          // above and once("load", ...) actually registering -- once()
+          // only catches *future* firings, so a load that already
+          // happened in that gap would otherwise be missed forever.
+          // Re-check once more and fire directly if that happened;
+          // reportReady()'s `reported` guard makes it safe if both paths
+          // end up firing.
+          if (map.loaded()) reportReady();
         }
         return;
       }
