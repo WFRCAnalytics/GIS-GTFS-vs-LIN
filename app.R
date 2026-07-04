@@ -143,14 +143,21 @@ tdm_stops_sf$tdm_mode <- parse_tdm_mode(tdm_stops_sf$tdm_group)
 tdm_stops_sf$tdm_year <- parse_tdm_year(tdm_stops_sf$tdm_group)
 
 # The model's own best (shortest, excluding 0/NA "no service this period")
-# headway across HEADWAY_1..5 -- used below to catch "core"-tier routes
-# that the 2023 baseline network never tagged as such (see
+# headway across HEADWAY_1..5, and how many of those 5 periods have any
+# service at all -- both used below to catch bus tiers that the 2023
+# baseline network's own group naming doesn't capture (see
 # tdm_bus_color_tier()'s comment).
+tdm_headway_cols <- function(df) {
+  as.data.frame(sf::st_drop_geometry(df))[c("HEADWAY_1", "HEADWAY_2", "HEADWAY_3", "HEADWAY_4", "HEADWAY_5")]
+}
 best_headway <- function(df) {
-  hw <- as.data.frame(sf::st_drop_geometry(df))[c("HEADWAY_1", "HEADWAY_2", "HEADWAY_3", "HEADWAY_4", "HEADWAY_5")]
-  apply(hw, 1, function(r) { r <- r[r > 0 & !is.na(r)]; if (length(r) == 0) NA else min(r) })
+  apply(tdm_headway_cols(df), 1, function(r) { r <- r[r > 0 & !is.na(r)]; if (length(r) == 0) NA else min(r) })
+}
+n_service_periods <- function(df) {
+  apply(tdm_headway_cols(df), 1, function(r) sum(r > 0 & !is.na(r)))
 }
 tdm_routes_sf$best_headway <- best_headway(tdm_routes_sf)
+tdm_routes_sf$n_service_periods <- n_service_periods(tdm_routes_sf)
 
 # Bus tiers colored to match the real GTFS feed's own route_color, not an
 # invented scheme -- confirmed by inspecting _data/gtfs/GTFS20250227.zip's
@@ -173,15 +180,32 @@ default_tdm_mode_color <- "#808080"
 # even though they're genuinely core-frequency service today, and render
 # the wrong color as a result. Their HEADWAY_1..5 gives this away: exactly
 # the same 10-15 min range as 2055UF's explicitly-tagged "core" routes.
-# Reclassify only for *color* purposes (not tdm_mode itself, which stays
-# what parse_tdm_mode() said -- the "Line types" filter/chips keep
-# behaving exactly as before) so a frequent "local" route with no
-# service-period faster than 15 min renders the same green as an
-# explicitly-tagged core route. Verified via a spatial nearest-route color
-# comparison against the real GTFS network: this took the 2023 bus color
-# match rate from 77% to 89%.
-tdm_bus_color_tier <- function(mode, headway) {
-  ifelse(mode == "local" & !is.na(headway) & headway <= 15, "core", mode)
+#
+# Similarly, a handful of "local" routes are genuinely the same kind of
+# peak-only commuter/employer shuttle as the model's explicitly-tagged
+# "express" routes (451/472/473/805/806/807/822), just not caught by the
+# "exp" token in their tdm_group name -- e.g. 513 (Industrial Business
+# Park Shuttle) and 551 (International Center) are colored red
+# (be2036) in the real GTFS feed despite neither name containing
+# "EXPRESS"/"LIMITED"/"FAST". What actually distinguishes them isn't the
+# name or even the headway value (many ordinary local routes share the
+# same 30-45 min headway) -- it's that they run in exactly ONE of
+# HEADWAY_1..5's time periods, with zero service the rest of the day,
+# identical to every already-tagged "express" route (confirmed: all 5
+# have service in exactly 1 of 5 periods, vs. only 4 of 68 "local"
+# routes -- and 0 "core"/"brt" routes -- sharing that signature).
+#
+# Both reclassifications are for *color* purposes only (not tdm_mode
+# itself, which stays what parse_tdm_mode() said -- the "Line types"
+# filter/chips keep behaving exactly as before). Verified via a spatial
+# nearest-route color comparison against the real GTFS network: the
+# core-tier fix alone took the 2023 bus color match rate from 77% to 89%.
+tdm_bus_color_tier <- function(mode, headway, n_periods) {
+  dplyr::case_when(
+    mode == "local" & !is.na(headway) & headway <= 15 ~ "core",
+    mode == "local" & !is.na(n_periods) & n_periods == 1 ~ "express",
+    TRUE ~ mode
+  )
 }
 
 # Rail is colored per named line (not one flat "rail" color) to match each
@@ -236,7 +260,85 @@ if (length(unmatched_rail_names) > 0) {
   )
 }
 
-tdm_bus_color_tiers <- tdm_bus_color_tier(tdm_routes_sf$tdm_mode, tdm_routes_sf$best_headway)
+tdm_bus_color_tiers <- tdm_bus_color_tier(
+  tdm_routes_sf$tdm_mode, tdm_routes_sf$best_headway, tdm_routes_sf$n_service_periods
+)
+tdm_bus_heuristic_colors <- unname(ifelse(
+  tdm_bus_color_tiers %in% names(tdm_mode_colors),
+  tdm_mode_colors[tdm_bus_color_tiers],
+  default_tdm_mode_color
+))
+
+# Attribute-driven color match: a TDM bus route's own NAME almost always
+# encodes its real GTFS route_short_name once the agency prefix (S = Salt
+# Lake, O = Ogden, M = Magna/Utah County) and any leading zeros are
+# stripped -- e.g. S513 -> "513", O612 -> "612", M805_Santaquin -> "805".
+# Flex-service groups (name starts with "SF"/"OF") map to GTFS's own
+# "F"-prefixed short names instead (SF453 -> "F453"). Verified against the
+# real feed loaded once at startup (initial_gtfs_routes_sf): this resolves
+# 68 of 75 2023 bus routes, and where it resolves, it agrees with
+# tdm_bus_color_tier()'s mode+headway heuristic on 67 of those 68 -- the
+# one disagreement (S240) was a genuine heuristic bug (headway alone can't
+# tell it apart from a true Core Route -- see tdm_bus_color_tier()'s
+# comment), so this crosswalk match takes priority over the heuristic
+# below whenever it resolves.
+#
+# "X" is its own naming wrinkle: TDM sometimes adds an express-marker X
+# GTFS's real short name doesn't have (S451X vs real "451"), and GTFS
+# sometimes has an express/BRT-marker X TDM's name doesn't (O603 vs real
+# "603X", UVX vs real "830X") -- tried both with and without a trailing
+# letter suffix rather than assuming one direction.
+tdm_bus_crosswalk_key <- function(name) {
+  is_flex <- grepl("^[SO]F", name)
+  no_prefix <- sub("^(S|O|M)", "", name)
+  no_prefix <- sub("_.*$", "", no_prefix) # M-style descriptive suffix (M805_Santaquin)
+  digits <- gsub("[^0-9]", "", no_prefix)
+  digits <- sub("^0+(?=[0-9])", "", digits, perl = TRUE)
+  letters_suffix <- gsub("[0-9]", "", no_prefix)
+  list(
+    primary = ifelse(is_flex, paste0("F", digits), paste0(digits, letters_suffix)),
+    alt = ifelse(is_flex, paste0("F", digits), digits)
+  )
+}
+gtfs_bus_colors_by_short_name <- initial_gtfs_routes_sf |>
+  st_drop_geometry() |>
+  filter(route_type == 3) |>
+  distinct(route_short_name, route_color)
+gtfs_bus_color_lookup <- setNames(gtfs_bus_colors_by_short_name$route_color, gtfs_bus_colors_by_short_name$route_short_name)
+
+# Scoped to the 2023 baseline year only -- the crosswalk's whole premise
+# ("this name decodes to a route that still exists today") only holds
+# there. Applying it to 2055UF too produced real false positives: forecast
+# -only project codenames that happen to end in a digit (TFLMVC1,
+# REROBRT1, HIUN1, ...) had their trailing digit stripped down to a bare
+# "1" by the alt-key fallback and spuriously matched today's real route
+# "1" (South Temple) -- confirmed by comparing against
+# tdm_bus_color_tier()'s heuristic, which 2055UF's own explicit
+# wfrc_brt_2055UF/wfrc_core_2055UF group tagging already gets right
+# without any crosswalk help.
+is_tdm_bus_2023 <- tdm_routes_sf$tdm_mode %in% c("local", "core", "express", "brt") &
+  tdm_routes_sf$tdm_year == "2023"
+crosswalk_keys <- tdm_bus_crosswalk_key(ifelse(is_tdm_bus_2023, tdm_routes_sf$NAME, NA))
+tdm_bus_crosswalk_colors <- unname(ifelse(
+  !is.na(gtfs_bus_color_lookup[crosswalk_keys$primary]),
+  gtfs_bus_color_lookup[crosswalk_keys$primary],
+  gtfs_bus_color_lookup[crosswalk_keys$alt]
+))
+
+# Small, explicit dictionary for named services the crosswalk above can't
+# resolve because they have no real-world route to match against yet --
+# currently just 2055UF-only "MidValCon" (LONGNAME nickname "MVX or
+# Mid-valley Connector"). The "X" naming convention (UVX/603X/830X/OGX)
+# consistently marks express/BRT-branded service across both TDM and real
+# GTFS naming -- confirmed by searching every TDM route's NAME/LONGNAME
+# for that pattern: every other "X"-branded route already has tdm_mode ==
+# "brt"/"express" from its tdm_group name already, so this is the one
+# genuine exception needing a manual override instead.
+tdm_bus_named_overrides <- c(MidValCon = "brt")
+tdm_bus_override_colors <- unname(tdm_mode_colors[tdm_bus_named_overrides[tdm_routes_sf$NAME]])
+
+tdm_bus_colors <- dplyr::coalesce(tdm_bus_crosswalk_colors, tdm_bus_override_colors, tdm_bus_heuristic_colors)
+
 tdm_routes_sf$tdm_color <- unname(ifelse(
   tdm_routes_sf$tdm_mode == "rail",
   ifelse(
@@ -244,11 +346,7 @@ tdm_routes_sf$tdm_color <- unname(ifelse(
     tdm_rail_line_colors[tdm_routes_sf$NAME],
     tdm_rail_fallback_color(tdm_routes_sf$MODE)
   ),
-  ifelse(
-    tdm_bus_color_tiers %in% names(tdm_mode_colors),
-    tdm_mode_colors[tdm_bus_color_tiers],
-    default_tdm_mode_color
-  )
+  tdm_bus_colors
 ))
 
 # Stops colored to match their own route, the same way GTFS stops are
