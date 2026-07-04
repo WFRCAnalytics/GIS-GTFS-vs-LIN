@@ -124,9 +124,9 @@
 }
 [data-bs-theme='dark'] .sb-card:hover { box-shadow: 0 3px 10px rgba(0, 0, 0, .3); }
 
-/* Default sizing for the bespoke brand icon set (R/icons.R) -- scales with
-   the surrounding text the same way a font-based icon would. */
-.brand-icon { width: 1em; height: 1em; flex-shrink: 0; }
+/* Layout hook for the Font Awesome icons routed through R/icons.R --
+   sized via font-size (inherited by default), same as any text glyph. */
+.brand-icon { flex-shrink: 0; }
 
 /* --- Section header (icon tile + label, optional right-aligned switch) --- */
 .section-head { margin-bottom: 9px; min-height: 24px; }
@@ -327,7 +327,7 @@
 .chip-option:hover { border-color: var(--bs-secondary-color); }
 .chip-option:active { transform: scale(.96); }
 .chip-option:focus-visible { outline: 2px solid var(--accent, #52b6d5); outline-offset: 1px; }
-.chip-option .brand-icon { width: 13px; height: 13px; color: var(--wfrc-label); transition: color .12s ease; }
+.chip-option .brand-icon { font-size: 13px; color: var(--wfrc-label); transition: color .12s ease; }
 
 .sb-card .chip-option.is-active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);

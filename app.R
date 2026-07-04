@@ -59,13 +59,34 @@ names(gtfs_raw_zips) <- vapply(gtfs_raw_zips, function(f) extract_date(basename(
 available_dates <- sort(names(gtfs_raw_zips), decreasing = TRUE)
 
 # Raw GTFS snapshot ids are yyyymmdd (e.g. "20250227"); render them as a
-# readable date for the snapshot picker and the map badge, while the control
-# value stays the raw id used to key into gtfs_raw_zips.
+# readable date for the snapshot picker's own choices (labeling *which saved
+# file* to pick), while the control value stays the raw id used to key into
+# gtfs_raw_zips. Not used for the map badge any more -- see
+# fmt_validity_range()/extract_gtfs_validity_range() for that, which reads
+# the feed's own effective date range instead of trusting the filename.
 fmt_snapshot <- function(d) {
   if (is.null(d) || !grepl("^[0-9]{8}$", d)) return(d %||% "")
   format(as.Date(d, "%Y%m%d"), "%b %e, %Y")
 }
 snapshot_choices <- setNames(available_dates, vapply(available_dates, fmt_snapshot, character(1)))
+
+# Formats a validity range (start/end Dates, from
+# extract_gtfs_validity_range()) for the map badge: "Apr 16 - Aug 19, 2023"
+# when both fall in the same year (no need to repeat it), "Apr 16, 2023 -
+# Aug 19, 2024" when they don't, or a single date if the feed is only valid
+# for one day (unusual but not invalid).
+fmt_validity_range <- function(start, end) {
+  if (is.null(start) || is.null(end) || length(start) == 0 || length(end) == 0 ||
+      is.na(start) || is.na(end)) {
+    return("")
+  }
+  if (start == end) return(format(start, "%b %e, %Y"))
+  if (format(start, "%Y") == format(end, "%Y")) {
+    paste0(format(start, "%b %e"), " - ", format(end, "%b %e, %Y"))
+  } else {
+    paste0(format(start, "%b %e, %Y"), " - ", format(end, "%b %e, %Y"))
+  }
+}
 
 # Loaded once, non-reactively, to build each map exactly one time. Every
 # subsequent update goes through a proxy so the current pan/zoom is preserved
@@ -249,6 +270,18 @@ add_gtfs_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visibl
       line_width = 3,
       popup = "route_long_name",
       tooltip = "route_short_name",
+      # MapLibre's default popup content is hardcoded background:#fff with
+      # no explicit text color at all (confirmed in maplibre-gl.css), so it
+      # inherits whatever color the surrounding page currently has -- in
+      # dark mode that's a light color, landing on the same white box and
+      # reading as invisible/"unreadable white" text. "light" (dark text on
+      # a light background) always matches that fixed white box regardless
+      # of the app's own theme -- not "auto"/"dark", since these layers are
+      # only ever added once (the bootstrap observer never re-adds them),
+      # so a theme baked in at creation time wouldn't follow later dark
+      # mode toggles anyway.
+      tooltip_style = "light",
+      popup_style = "light",
       visibility = lines_visibility
     )
 
@@ -261,6 +294,7 @@ add_gtfs_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visibl
     circle_stroke_color = "#ffffff",
     circle_stroke_width = 1,
     popup = "stop_name",
+    popup_style = "light",
     visibility = stops_visibility,
     cluster_options = if (cluster) gtfs_cluster_options() else NULL
   )
@@ -296,6 +330,8 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
       line_dasharray = c(2, 1),
       popup = "LONGNAME",
       tooltip = "NAME",
+      tooltip_style = "light",
+      popup_style = "light",
       visibility = lines_visibility
     )
 
@@ -326,7 +362,7 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
 
 ui <- page_navbar(
   title = tagList(
-    img(src = "brand/logo/horizontal/WFRC_logo_horizontal_white_transparent.png",
+    img(src = "brand/logo/abbreviated/WFRC_logo_abbreviated_white_transparent.png",
         height = "28px", alt = "WFRC logo", class = "me-2"),
     "TDM vs GTFS"
   ),
@@ -336,6 +372,17 @@ ui <- page_navbar(
   # loads after the bslib/brand-compiled Bootstrap is the right home for it.
   theme = bs_theme(brand = brand_data),
   window_title = "WFRC TDM vs GTFS",
+  # The navbar's background is always WFRC's dark brand blue, regardless of
+  # the app's own light/dark mode toggle -- but without this, its
+  # data-bs-theme attribute defaults to "auto" (follows the *page's*
+  # current theme). Bootstrap-theme-aware content inside the navbar (the
+  # dark-mode toggle icon itself) then computes --bs-emphasis-color off
+  # the page's theme, not the navbar's actual (permanently dark) surface --
+  # in light mode that resolves to near-black (#151515), landing on the
+  # same dark-blue bar and reading as invisible. Explicitly scoping the
+  # navbar to "dark" fixes this in both app themes, since the navbar's
+  # surface itself never actually changes.
+  navbar_options = navbar_options(theme = "dark"),
   header = tagList(
     tags$head(
       tags$link(rel = "icon", type = "image/png",
@@ -494,16 +541,42 @@ server <- function(input, output, session) {
     ))
   }
 
+  # TRUE once gtfs_validity_range() has resolved at least once. Reading a
+  # slow reactive is the *only* way to ask "is it ready yet" -- there's no
+  # way to peek at a reactive's readiness without forcing its evaluation --
+  # so the badge render function below checks this fast, plain reactiveVal
+  # first and only touches gtfs_validity_range() once it's already TRUE, at
+  # which point Shiny's own memoization means that read returns instantly
+  # (nothing has invalidated it since the observer below computed it).
+  # Without this indirection, the badge would show completely blank (not
+  # even "Loading...") for the full ~10-15s the live GTFS pipeline takes,
+  # since simply evaluating gtfs_validity_range() to check readiness forces
+  # that same slow computation to run and block first.
+  gtfs_validity_ready <- reactiveVal(FALSE)
+  # Deferred via session$onFlushed() for the same reason as the bootstrap/
+  # set_source() observers further down: this is what actually forces
+  # gtfs_validity_range() (and thus the live GTFS pipeline) to run for the
+  # first time, so it can't be eager or it'd delay output$map's own
+  # already-ready value from reaching the browser.
+  session$onFlushed(function() {
+    observeEvent(gtfs_validity_range(), {
+      gtfs_validity_ready(TRUE)
+    }, ignoreNULL = FALSE)
+  }, once = TRUE)
+
   output$comparison_summary <- renderUI({
     gtfs_part <- if (!isTRUE(input$gtfs_enabled)) {
       "Off"
+    } else if (!gtfs_validity_ready()) {
+      "Loading…"
     } else {
-      switch(input$gtfs_source %||% "snapshot",
-        snapshot = fmt_snapshot(input$gtfs_date),
-        upload = "Uploaded feed",
-        url = "Feed URL",
-        "On"
-      )
+      # The feed's own effective date range (see
+      # extract_gtfs_validity_range()), not the source type or a
+      # filename-derived guess -- the same for every source
+      # (snapshot/upload/url) since it comes from the GTFS content itself.
+      range <- gtfs_validity_range()
+      date_label <- tryCatch(fmt_validity_range(range$start, range$end), error = function(e) "")
+      if (nzchar(date_label)) date_label else "Unknown date"
     }
     tdm_part <- if (!isTRUE(input$tdm_enabled)) {
       "Off"
@@ -596,6 +669,15 @@ server <- function(input, output, session) {
 
   gtfs_routes_sf <- reactive({ req(gtfs_data()); gtfs_data()$routes_shapes_sf })
   gtfs_stops_sf <- reactive({ req(gtfs_data()); gtfs_data()$stops_sf })
+  # The feed's own effective date range (from feed_info.txt, or the
+  # calendar/calendar_dates span as a fallback -- see
+  # extract_gtfs_validity_range()), the same for every source (snapshot,
+  # upload, or URL) since it comes from the GTFS content itself, not
+  # wherever the file happened to come from.
+  gtfs_validity_range <- reactive({
+    req(gtfs_data())
+    list(start = gtfs_data()$validity_start, end = gtfs_data()$validity_end)
+  })
 
   # No separate basemap picker -- it follows the light/dark mode toggle
   # instead (Dark Matter in dark mode, Positron in light mode), since running
@@ -651,28 +733,76 @@ server <- function(input, output, session) {
   })
 
   # The overlay map is a session-long singleton, built exactly once. No
-  # `bounds` argument means maplibre() falls back to its own default
-  # (center = c(0, 0), zoom = 0, projection = "globe"), a full-world view
-  # that doesn't depend on any live per-session GTFS/TDM data at all, so it
-  # renders the instant the session connects instead of leaving the panel
-  # blank for the ~10-15s the live data pipeline takes. Every reactive
-  # read inside is isolate()d (current_basemap() included -- dark-mode
-  # style changes go through the proxy `set_style()` observer below
-  # instead), so this render function has no tracked dependencies at all
-  # and Shiny only ever calls it once, for the life of the session. From
-  # here on, the map is *only* ever touched through maplibre_proxy("map")
-  # -- add_gtfs_layers()/add_tdm_layers()/fit_bounds() below once the live
-  # data is ready, set_source()/set_layout_property()/set_style() as
-  # filters and dark mode change -- never re-rendered. #map's <div> is
-  # static in the UI (see the "Map" nav_panel) and conditionalPanel()
-  # only ever hides/shows it, so switching to swipe mode and back leaves
-  # this same instance, with whatever pan/zoom/layers it already has,
-  # exactly as the user left it -- there's nothing to re-bootstrap.
+  # `bounds` argument means the initial view is just an explicit
+  # center/zoom -- a full-world-scale globe view that doesn't depend on any
+  # live per-session GTFS/TDM data at all, so it renders the instant the
+  # session connects instead of leaving the panel blank for the ~10-15s the
+  # live data pipeline takes. Centered on Salt Lake City (WFRC's service
+  # area) rather than maplibre()'s own default (0, 0) so the globe is
+  # already facing the right part of the world before fit_bounds() flies
+  # in; zoom = 2 (rather than the default 0) starts it a bit closer in too
+  # -- 0 is zoomed all the way out with a lot of empty surrounding space.
+  # Both are just a more deliberate-looking starting point for the ~1-2s
+  # before the bootstrap observer's fit_bounds(..., animate = TRUE) call
+  # (below) flies into the *actual*, dynamically-determined GTFS bounds --
+  # MapLibre's fitBounds() uses its flyTo() curve internally whenever
+  # animate/linear aren't both false, so that's already the same swooping
+  # zoom-out-then-in transition a direct fly_to() call would give, just
+  # computed to precisely fit whatever bbox the current GTFS feed has
+  # (fly_to() takes a fixed center + zoom, not a bbox, and correctly
+  # picking a zoom to fit an arbitrary bbox needs the client's actual
+  # viewport size -- exactly what fit_bounds() already handles). Every
+  # reactive read inside is isolate()d (current_basemap() included --
+  # dark-mode style changes go through the proxy `set_style()` observer
+  # below instead), so this render function has no tracked dependencies at
+  # all and Shiny only ever calls it once, for the life of the session.
+  # From here on, the map is *only* ever touched through
+  # maplibre_proxy("map") -- add_gtfs_layers()/add_tdm_layers()/
+  # fit_bounds() below once the live data is ready, set_source()/
+  # set_layout_property()/set_style() as filters and dark mode change --
+  # never re-rendered. #map's <div> is static in the UI (see the "Map"
+  # nav_panel) and conditionalPanel() only ever hides/shows it, so
+  # switching to swipe mode and back leaves this same instance, with
+  # whatever pan/zoom/layers it already has, exactly as the user left it --
+  # there's nothing to re-bootstrap.
   output$map <- renderMaplibre({
     isolate({
-      maplibre(style = carto_style(current_basemap()))
+      maplibre(
+        style = carto_style(current_basemap()),
+        # center = c(-111.8910, 40.7608), # Salt Lake City -- commented out
+        # to A/B test against (0, 0) below, per request; restore this line
+        # (and remove the one below) to go back.
+        center = c(0, 0),
+        zoom = 2
+      ) |>
+        # Zoom in/out + compass (doubles as a "reset view" button once the
+        # map's bearing/pitch have changed) in the top-right, standard
+        # MapLibre chrome. visualize_pitch = TRUE matters beyond just the
+        # compass icon's look: MapLibre's NavigationControl only resets
+        # pitch (tilt) along with bearing when this is on -- confirmed in
+        # its own source, the compass click handler calls
+        # resetNorthPitch() (bearing + pitch) when visualizePitch is true,
+        # vs. resetNorth() (bearing only, tilt left untouched) when it's
+        # not. Without this, clicking the compass after tilting the map
+        # would un-rotate it but leave it stuck at an angle.
+        add_navigation_control(position = "top-right", visualize_pitch = TRUE) |>
+        # Imperial since this is a US (Utah) audience-facing tool.
+        add_scale_control(position = "bottom-left", unit = "imperial")
     })
   })
+  # By default Shiny suspends an output's evaluation until the client
+  # confirms that output's element is actually visible (suspendWhenHidden),
+  # to avoid wasting work on hidden content. #map now sits behind a
+  # conditionalPanel() (see the "Map" nav_panel) instead of a plain static
+  # element, so it's subject to that suspension -- and empirically, the
+  # client's visibility handshake for it was taking several seconds to
+  # arrive (confirmed by adding a message() at the top of this render
+  # function and comparing its timestamp to session start: ~60ms without
+  # this line, ~5s with it removed), holding up the very first paint the
+  # whole time despite this render having zero data dependencies. Disabling
+  # suspendWhenHidden makes Shiny evaluate and send it immediately instead
+  # of waiting on that round trip.
+  outputOptions(output, "map", suspendWhenHidden = FALSE)
 
   # TRUE once the one-time layer-add + fly-to-bounds bootstrap (below) has
   # happened, for the life of the session.
@@ -697,27 +827,67 @@ server <- function(input, output, session) {
   # container is currently visible, so if the user is looking at swipe
   # mode when the live data finishes, the overlay map is already fully
   # ready by the time they switch back instead of popping in late.
-  observeEvent(
-    list(map_bootstrapped(), input$map_ready,
-         gtfs_routes_sf(), gtfs_stops_sf(), tdm_routes_filtered(), tdm_stops_filtered()),
-    {
-      if (map_bootstrapped()) return()
-      if (is.null(input$map_ready)) return()
-      if (is.null(gtfs_routes_sf()) || is.null(gtfs_stops_sf()) ||
-          is.null(tdm_routes_filtered()) || is.null(tdm_stops_filtered())) {
-        return()
-      }
-      maplibre_proxy("map") |>
-        add_tdm_layers(tdm_routes_filtered(), tdm_stops_filtered(),
-                        lines_visibility = tdm_lines_vis(), stops_visibility = tdm_stops_vis()) |>
-        add_gtfs_layers(gtfs_routes_sf(), gtfs_stops_sf(),
-                         lines_visibility = gtfs_lines_vis(), stops_visibility = gtfs_stops_vis(),
-                         labels_visibility = gtfs_labels_vis()) |>
-        fit_bounds(initial_gtfs_routes_sf, animate = TRUE)
-      map_bootstrapped(TRUE)
-    },
-    ignoreNULL = FALSE
-  )
+  #
+  # This (and the four set_source() observers further down, up to
+  # output$compare_map) is registered inside session$onFlushed(...,
+  # once = TRUE) rather than directly here, on top of output$map's
+  # suspendWhenHidden = FALSE above -- both are needed together, confirmed
+  # empirically (message()-timestamped output$map render start vs. session
+  # start): with only suspendWhenHidden fixed, this observer's eventExpr
+  # still reads gtfs_routes_sf()/gtfs_stops_sf()/tdm_routes_filtered()/
+  # tdm_stops_filtered() directly, and Shiny observers run eagerly at
+  # session start (ignoreInit only skips the *handler*, not evaluating the
+  # eventExpr) -- so evaluating this observer's dependencies at session
+  # start still forced the ~10-15s live GTFS reprocessing pipeline to run
+  # synchronously before output$map's own render got a turn on this
+  # session's single R thread. Deferring *registration* of this observer
+  # (and the four below) until after the first flush has already gone out
+  # means nothing forces that slow reactive chain to run before the
+  # browser has the globe in hand.
+  session$onFlushed(function() {
+    observeEvent(
+      list(map_bootstrapped(), input$map_ready,
+           gtfs_routes_sf(), gtfs_stops_sf(), tdm_routes_filtered(), tdm_stops_filtered()),
+      {
+        if (map_bootstrapped()) return()
+        if (is.null(input$map_ready)) return()
+        if (is.null(gtfs_routes_sf()) || is.null(gtfs_stops_sf()) ||
+            is.null(tdm_routes_filtered()) || is.null(tdm_stops_filtered())) {
+          return()
+        }
+        # Layers are added hidden (visibility = "none", overriding whatever
+        # the sidebar toggles currently say) and only revealed once the
+        # fit_bounds() flight below actually arrives -- see the
+        # input$map_moveend-driven observers further down. Without this,
+        # thousands of stops render at zoom 2 (still the initial globe
+        # view, before the camera has moved at all) as a single enormous
+        # cluster covering half the continent, which pops into existence
+        # instantly the moment these proxy calls are processed -- visible
+        # proof via a Playwright screenshot at the first zoom tick above
+        # 2.0: a "5.2k" cluster the size of the continental US, sitting on
+        # an otherwise-empty globe for the ~100ms before the flight even
+        # starts moving. That abrupt pop-in, not the camera motion itself
+        # (independently confirmed smooth via a dense zoom/center trace),
+        # is what actually read as "abrupt and sudden".
+        maplibre_proxy("map") |>
+          add_tdm_layers(tdm_routes_filtered(), tdm_stops_filtered(),
+                          lines_visibility = "none", stops_visibility = "none") |>
+          add_gtfs_layers(gtfs_routes_sf(), gtfs_stops_sf(),
+                           lines_visibility = "none", stops_visibility = "none",
+                           labels_visibility = "none") |>
+          # duration = 3500 (ms): without an explicit duration, MapLibre's
+          # flyTo picks one itself based on distance/zoom delta -- for the
+          # zoom-2 globe -> local-network jump this comes out well under
+          # 2s by default, which reads as an abrupt jump rather than a
+          # smooth transition given how much ground (and zoom range) it
+          # covers. A longer, fixed duration makes the same flyTo curve
+          # feel deliberate instead of rushed.
+          fit_bounds(initial_gtfs_routes_sf, animate = TRUE, duration = 3500)
+        map_bootstrapped(TRUE)
+      },
+      ignoreNULL = FALSE
+    )
+  }, once = TRUE)
 
   output$compare_map <- renderMaplibreCompare({
     req(compare_mode() == "swipe")
@@ -733,33 +903,42 @@ server <- function(input, output, session) {
       compare(gtfs_map, tdm_map, mode = "swipe", orientation = "vertical")
     })
   })
+  # Same suspendWhenHidden fix as #map above, and for the same reason --
+  # #compare_map also sits behind its own conditionalPanel now.
+  outputOptions(output, "compare_map", suspendWhenHidden = FALSE)
 
   # req(layers_ready()) on all of these -- in overlay mode the layers they
   # target don't exist until the bootstrap observer above has added them;
   # without the guard a fast interaction during the ~10-15s initial load
   # (e.g. changing the GTFS date before the first fetch even finishes)
   # would call set_source()/set_layout_property() on a nonexistent layer.
-  observeEvent(gtfs_routes_sf(), {
-    req(layers_ready())
-    gtfs_proxy() |> set_source(layer_id = "gtfs_routes", source = gtfs_routes_sf())
-  }, ignoreInit = TRUE)
+  # Deferred via session$onFlushed() for the same reason as the bootstrap
+  # observer above -- each of these reads a GTFS/TDM data reactive directly
+  # as its eventExpr, which would otherwise force that slow reactive to run
+  # as part of the session's very first reactive round.
+  session$onFlushed(function() {
+    observeEvent(gtfs_routes_sf(), {
+      req(layers_ready())
+      gtfs_proxy() |> set_source(layer_id = "gtfs_routes", source = gtfs_routes_sf())
+    }, ignoreInit = TRUE)
 
-  observeEvent(gtfs_stops_sf(), {
-    req(layers_ready())
-    gtfs_proxy() |>
-      set_source(layer_id = "gtfs_stops", source = gtfs_stops_sf()) |>
-      set_source(layer_id = "gtfs_stop_labels", source = gtfs_stops_sf())
-  }, ignoreInit = TRUE)
+    observeEvent(gtfs_stops_sf(), {
+      req(layers_ready())
+      gtfs_proxy() |>
+        set_source(layer_id = "gtfs_stops", source = gtfs_stops_sf()) |>
+        set_source(layer_id = "gtfs_stop_labels", source = gtfs_stops_sf())
+    }, ignoreInit = TRUE)
 
-  observeEvent(tdm_routes_filtered(), {
-    req(layers_ready())
-    tdm_proxy() |> set_source(layer_id = "tdm_routes", source = tdm_routes_filtered())
-  }, ignoreInit = TRUE)
+    observeEvent(tdm_routes_filtered(), {
+      req(layers_ready())
+      tdm_proxy() |> set_source(layer_id = "tdm_routes", source = tdm_routes_filtered())
+    }, ignoreInit = TRUE)
 
-  observeEvent(tdm_stops_filtered(), {
-    req(layers_ready())
-    tdm_proxy() |> set_source(layer_id = "tdm_stops", source = tdm_stops_filtered())
-  }, ignoreInit = TRUE)
+    observeEvent(tdm_stops_filtered(), {
+      req(layers_ready())
+      tdm_proxy() |> set_source(layer_id = "tdm_stops", source = tdm_stops_filtered())
+    }, ignoreInit = TRUE)
+  }, once = TRUE)
 
   observeEvent(list(input$gtfs_display, input$gtfs_enabled), {
     req(layers_ready())
@@ -789,6 +968,50 @@ server <- function(input, output, session) {
         set_layout_property("tdm_stops-cluster-count", "visibility", tdm_stops_vis())
     }
   }, ignoreInit = TRUE)
+
+  # Reveals the layers the bootstrap observer above added hidden, exactly
+  # once, the first time its fit_bounds() flight into view actually
+  # finishes -- input$map_moveend is set by www/app.js on *every* MapLibre
+  # 'moveend' on the overlay map (pan/zoom included, forever, not just this
+  # one flight), so this is deliberately guarded to fire only the first
+  # time, not every time:
+  #   1. A standalone observer targeting maplibre_proxy("map") directly,
+  #      rather than folded into the two observers above -- those route
+  #      through gtfs_proxy()/tdm_proxy(), which resolve to the *swipe*
+  #      map's proxy while compare_mode() == "swipe". Confirmed the hard
+  #      way: piggybacking map_moveend onto them let an overlay-map-only
+  #      movement notification fire set_layout_property() calls against
+  #      the swipe map instead, including cluster companion layers that
+  #      don't exist there at all (clustering is forced off in swipe mode)
+  #      -- "Cannot style non-existing layer gtfs_stops-clusters" during a
+  #      swipe<->overlay round trip.
+  #   2. layers_revealed guards this to run exactly once, not on every
+  #      moveend for the rest of the session. Confirmed the hard way this
+  #      matters too: toggling dark mode later fires a 'moveend' of its
+  #      own (apparently a side effect of set_style()'s reload, not an
+  #      actual camera move), and set_style() briefly removes and restores
+  #      all layers around that same reload -- if this observer wasn't
+  #      guarded to a single shot, it could land exactly inside that
+  #      window and try to style layers that momentarily don't exist yet,
+  #      throwing the same "Cannot style non-existing layer" errors again.
+  #      A single reveal, right after the one flight it exists for, avoids
+  #      that race entirely instead of trying to time around it.
+  layers_revealed <- reactiveVal(FALSE)
+  observeEvent(input$map_moveend, {
+    req(map_bootstrapped())
+    if (layers_revealed()) return()
+    maplibre_proxy("map") |>
+      set_layout_property("gtfs_routes", "visibility", gtfs_lines_vis()) |>
+      set_layout_property("gtfs_stops", "visibility", gtfs_stops_vis()) |>
+      set_layout_property("gtfs_stop_labels", "visibility", gtfs_labels_vis()) |>
+      set_layout_property("gtfs_stops-clusters", "visibility", gtfs_stops_vis()) |>
+      set_layout_property("gtfs_stops-cluster-count", "visibility", gtfs_stops_vis()) |>
+      set_layout_property("tdm_routes", "visibility", tdm_lines_vis()) |>
+      set_layout_property("tdm_stops", "visibility", tdm_stops_vis()) |>
+      set_layout_property("tdm_stops-clusters", "visibility", tdm_stops_vis()) |>
+      set_layout_property("tdm_stops-cluster-count", "visibility", tdm_stops_vis())
+    layers_revealed(TRUE)
+  })
 
   observeEvent(input$dark_mode, {
     # gtfs_proxy()/tdm_proxy() both resolve to the same maplibre_proxy("map")

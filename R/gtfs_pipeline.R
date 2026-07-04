@@ -47,11 +47,51 @@ normalize_color <- function(x, default) {
   ifelse(is.na(x) | x == "", paste0("#", default), paste0("#", x))
 }
 
-# Returns list(routes_shapes_sf = ..., stops_sf = ...) built from a raw GTFS
-# zip, regardless of its internal layout (flatten_gtfs_zip() normalizes it
-# first) or where it came from (local file, upload, or downloaded feed URL).
+# The GTFS feed's own effective date *range*, independent of where it came
+# from (saved snapshot, upload, or feed URL) or what its filename happens
+# to say -- confirmed these can genuinely disagree: _data/gtfs/20230723.zip
+# (named for its 2023-07-23 capture/publish date) actually reports a
+# feed_start_date of 2023-04-16 internally. A GTFS feed is valid over a
+# date range, not a single day, so both endpoints are pulled from the same
+# source rather than mixing e.g. feed_info's start with calendar's end.
+# feed_info.txt is optional in the GTFS spec (and feed_end_date is only
+# conditionally required even when feed_info.txt exists), so this falls
+# back to calendar.txt's min(start_date)/max(end_date), then
+# calendar_dates.txt's min/max(date). tidytransit::read_gtfs() already
+# parses all of these as real Date columns, so no yyyymmdd string parsing
+# is needed here.
+extract_gtfs_validity_range <- function(gtfs) {
+  no_range <- list(start = as.Date(NA), end = as.Date(NA))
+
+  if (!is.null(gtfs$feed_info) &&
+      all(c("feed_start_date", "feed_end_date") %in% names(gtfs$feed_info))) {
+    start <- gtfs$feed_info$feed_start_date[1]
+    end <- gtfs$feed_info$feed_end_date[1]
+    if (!is.na(start) && !is.na(end)) return(list(start = start, end = end))
+  }
+  if (!is.null(gtfs$calendar) &&
+      all(c("start_date", "end_date") %in% names(gtfs$calendar)) &&
+      nrow(gtfs$calendar) > 0) {
+    start <- suppressWarnings(min(gtfs$calendar$start_date, na.rm = TRUE))
+    end <- suppressWarnings(max(gtfs$calendar$end_date, na.rm = TRUE))
+    if (is.finite(start) && is.finite(end)) return(list(start = start, end = end))
+  }
+  if (!is.null(gtfs$calendar_dates) && "date" %in% names(gtfs$calendar_dates) &&
+      nrow(gtfs$calendar_dates) > 0) {
+    start <- suppressWarnings(min(gtfs$calendar_dates$date, na.rm = TRUE))
+    end <- suppressWarnings(max(gtfs$calendar_dates$date, na.rm = TRUE))
+    if (is.finite(start) && is.finite(end)) return(list(start = start, end = end))
+  }
+  no_range
+}
+
+# Returns list(routes_shapes_sf = ..., stops_sf = ..., validity_start = ...,
+# validity_end = ...) built from a raw GTFS zip, regardless of its internal
+# layout (flatten_gtfs_zip() normalizes it first) or where it came from
+# (local file, upload, or downloaded feed URL).
 build_gtfs_layers <- function(zip_path) {
   gtfs <- read_gtfs(flatten_gtfs_zip(zip_path))
+  validity <- extract_gtfs_validity_range(gtfs)
 
   routes <- gtfs$routes %>%
     mutate(
@@ -96,5 +136,6 @@ build_gtfs_layers <- function(zip_path) {
     mutate(stop_color = ifelse(is.na(stop_color), "#8B7E74", stop_color)) %>%
     select(stop_id, stop_name, route_ids, stop_color)
 
-  list(routes_shapes_sf = routes_shapes_sf, stops_sf = stops_sf)
+  list(routes_shapes_sf = routes_shapes_sf, stops_sf = stops_sf,
+       validity_start = validity$start, validity_end = validity$end)
 }

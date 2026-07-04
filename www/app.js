@@ -204,6 +204,22 @@
           // end up firing.
           if (map.loaded()) reportReady();
         }
+        // Reports every camera movement's completion (pan, zoom, and the
+        // bootstrap observer's own fit_bounds() flight into the GTFS
+        // network alike) so app.R can reveal the GTFS/TDM layers -- added
+        // hidden -- only once that flight actually arrives, instead of
+        // them popping into view (as an enormous, all-stops-in-one
+        // cluster, since the camera is still at the zoomed-out initial
+        // view when they'd otherwise be added) before the camera has
+        // moved at all. Deliberately map.on(), not map.once(): app.R's own
+        // observer guards against reacting to any *earlier* moveend with
+        // req(map_bootstrapped()), so this can just report every
+        // occurrence and let the server decide which one matters, rather
+        // than this client-side code needing to know which specific
+        // moveend is "the" one to wait for.
+        map.on("moveend", function () {
+          Shiny.setInputValue("map_moveend", Date.now());
+        });
         return;
       }
       if (attemptsLeft > 0) {

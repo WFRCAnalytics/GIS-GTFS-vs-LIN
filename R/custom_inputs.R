@@ -5,7 +5,8 @@
 # aria-checked) -- the JS binding reads that straight off the DOM, so the
 # correct default value is available before any user interaction, no
 # JS-side default-computation involved. Requires R/icons.R to be sourced
-# first (chip_group_input()'s optional icons use brand_icon()).
+# first (chip_group_input()'s optional icons use brand_icon(), which now
+# resolves through Font Awesome).
 
 # Single-select segmented control -- drop-in replacement for
 # radioButtons(inline = FALSE) in terms of value contract: `choices` is the
