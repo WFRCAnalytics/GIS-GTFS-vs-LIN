@@ -19,14 +19,22 @@ build_tdm_layers <- function(gdb_zip_path) {
     line_layer <- paste0(group_name, "_PTLine")
     node_layer <- paste0(group_name, "_PTNode")
 
-    routes <- st_read(gdb, layer = line_layer, quiet = TRUE) %>%
-      mutate(tdm_group = group_name) %>%
-      select(tdm_group, NAME, LONGNAME, MODE, OPERATOR,
+    # line_id = row_number() at read time, before any select()/rbind() --
+    # confirmed against the raw gdb that _PTNode's LINEID is exactly the
+    # 1-based row position of its line within this same group's _PTLine
+    # (not a NAME/foreign-key match: LINEID is an integer like 1, 2, 3,
+    # while NAME is a string like "Blue"). Capturing it explicitly here
+    # keeps the stops-to-routes join in app.R (for stop_color) an
+    # intentional key rather than an implicit "row order never changes"
+    # assumption living downstream.
+    routes <- st_read(gdb, layer = line_layer, quiet = TRUE) |>
+      mutate(tdm_group = group_name, line_id = row_number()) |>
+      select(tdm_group, line_id, NAME, LONGNAME, MODE, OPERATOR,
              HEADWAY_1, HEADWAY_2, HEADWAY_3, HEADWAY_4, HEADWAY_5)
 
-    stops <- st_read(gdb, layer = node_layer, quiet = TRUE) %>%
-      filter(STOPNODE == 1) %>%
-      mutate(tdm_group = group_name) %>%
+    stops <- st_read(gdb, layer = node_layer, quiet = TRUE) |>
+      filter(STOPNODE == 1) |>
+      mutate(tdm_group = group_name) |>
       select(tdm_group, LINEID, SEQNO, NODES)
 
     list(routes = routes, stops = stops)
@@ -34,8 +42,8 @@ build_tdm_layers <- function(gdb_zip_path) {
 
   results <- lapply(groups$TRANSITGROUP_NAME, read_group)
 
-  routes_sf <- do.call(rbind, lapply(results, `[[`, "routes")) %>% st_transform(4326)
-  stops_sf <- do.call(rbind, lapply(results, `[[`, "stops")) %>% st_transform(4326)
+  routes_sf <- do.call(rbind, lapply(results, `[[`, "routes")) |> st_transform(4326)
+  stops_sf <- do.call(rbind, lapply(results, `[[`, "stops")) |> st_transform(4326)
 
   list(routes_sf = routes_sf, stops_sf = stops_sf)
 }

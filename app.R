@@ -142,19 +142,135 @@ tdm_routes_sf$tdm_year <- parse_tdm_year(tdm_routes_sf$tdm_group)
 tdm_stops_sf$tdm_mode <- parse_tdm_mode(tdm_stops_sf$tdm_group)
 tdm_stops_sf$tdm_year <- parse_tdm_year(tdm_stops_sf$tdm_group)
 
-# rail/brt use WFRC's own Wasatch Choice transit colors (wc-light-rail/
-# wc-brt); core/express/local have no official Wasatch Choice swatch, so
-# they borrow distinct colors from WFRC's broader Core Palette instead.
+# The model's own best (shortest, excluding 0/NA "no service this period")
+# headway across HEADWAY_1..5 -- used below to catch "core"-tier routes
+# that the 2023 baseline network never tagged as such (see
+# tdm_bus_color_tier()'s comment).
+best_headway <- function(df) {
+  hw <- as.data.frame(sf::st_drop_geometry(df))[c("HEADWAY_1", "HEADWAY_2", "HEADWAY_3", "HEADWAY_4", "HEADWAY_5")]
+  apply(hw, 1, function(r) { r <- r[r > 0 & !is.na(r)]; if (length(r) == 0) NA else min(r) })
+}
+tdm_routes_sf$best_headway <- best_headway(tdm_routes_sf)
+
+# Bus tiers colored to match the real GTFS feed's own route_color, not an
+# invented scheme -- confirmed by inspecting _data/gtfs/GTFS20250227.zip's
+# routes.txt: buses only ever use 5 distinct route_color values, and each
+# one turns out to be a real UTA service tier once you look at the route
+# names sharing it (green = the named "Core Route" frequent grid -- State
+# Street, 900 South, 3300 South, Redwood Road, matching our "core" mode's
+# own route names/LONGNAMEs almost 1:1; red = EXPRESS/LIMITED/FAST-named
+# routes; light blue = the real named BRT services, OGX/UVX). "local" is
+# simply the majority/default tier (50 of 80 routes).
 tdm_mode_colors <- c(
-  rail = "#3762ad", brt = "#24949a", core = "#553c8f",
-  express = "#ea7b00", local = "#007426"
+  core = "#2eb566", express = "#be2036", brt = "#1191d0", local = "#004a97"
 )
 default_tdm_mode_color <- "#808080"
+
+# The 2023 baseline network was never modeled with a "core" tier at all --
+# every wfrc_core_* group in the gdb is 2055UF-only (confirmed: 0 "core"
+# rows for any 2023 group) -- so real, currently-existing Core Route grid
+# streets (State Street, 3300 South, ...) get bucketed as "local" for 2023
+# even though they're genuinely core-frequency service today, and render
+# the wrong color as a result. Their HEADWAY_1..5 gives this away: exactly
+# the same 10-15 min range as 2055UF's explicitly-tagged "core" routes.
+# Reclassify only for *color* purposes (not tdm_mode itself, which stays
+# what parse_tdm_mode() said -- the "Line types" filter/chips keep
+# behaving exactly as before) so a frequent "local" route with no
+# service-period faster than 15 min renders the same green as an
+# explicitly-tagged core route. Verified via a spatial nearest-route color
+# comparison against the real GTFS network: this took the 2023 bus color
+# match rate from 77% to 89%.
+tdm_bus_color_tier <- function(mode, headway) {
+  ifelse(mode == "local" & !is.na(headway) & headway <= 15, "core", mode)
+}
+
+# Rail is colored per named line (not one flat "rail" color) to match each
+# real GTFS rail route_color individually -- TRAX Blue/Red/Green Line,
+# S-Line streetcar, and FrontRunner each have their own distinct color in
+# the real feed, confirmed the same way as the bus tiers above. RCRT_OGPN
+# (the model's name for the Ogden<->Provo / Pleasant View<->Payson
+# commuter-rail corridor, present in both model years) and FRFBCEXT1 (its
+# 2055UF Brigham City extension, literally named "FrontRunner Forward" in
+# its own LONGNAME) are both FrontRunner under a different internal name,
+# so they take FrontRunner's color too. "Orange" and "POM_Rail" ("Point of
+# Mountain Rail") are both 2055UF-only lines with no current real-world
+# GTFS route to match against -- best guess, drawn from WFRC's own brand
+# palette rather than an arbitrary new hex: Core Palette "orange" for the
+# literally-named Orange Line, and the wc-commuter-rail swatch (defined in
+# brand.yml but otherwise unused in this app) for Point of Mountain Rail,
+# since that's functionally what it is.
+#
+# Accepted tradeoff (confirmed against the real GTFS data, not a mistake):
+# TRAX Blue/Red/Green share their exact color with the bus local/express/
+# core tiers respectively, since that's genuinely how UTA's own feed
+# colors them. TDM lines are already visually distinguishable from GTFS
+# ones by their dashed stroke (see line_dasharray below), and hovering/
+# clicking any TDM line surfaces its specific NAME/LONGNAME regardless of
+# color (see tooltip/popup below) -- so this doesn't leave any line
+# actually unidentifiable, just not uniquely *colored* within the TDM
+# layer alone.
+tdm_rail_line_colors <- c(
+  Blue = "#004a97", Red = "#be2036", Green = "#2eb566", Sline = "#77777a",
+  RCRT_OGPN = "#c227b9", FRFBCEXT1 = "#c227b9",
+  Orange = brand_data$color$palette[["orange"]],
+  POM_Rail = brand_data$color$palette[["wc-commuter-rail"]]
+)
+# Mode-aware fallback (rather than one flat default) for a rail NAME this
+# app doesn't recognize -- e.g. if the gdb gets regenerated with different
+# line naming. MODE 7 is light rail/streetcar in this gdb (matches every
+# NAME above except the two commuter-rail ones), so an unrecognized MODE-7
+# line falls back to a generic light-rail color and an unrecognized
+# MODE-8 (or anything else) line falls back to the generic commuter-rail
+# color, rather than guessing wrong in one direction for both.
+tdm_rail_fallback_color <- function(mode) {
+  ifelse(mode == 7, "#3762ad", "#24316d")
+}
+unmatched_rail_names <- setdiff(
+  unique(tdm_routes_sf$NAME[tdm_routes_sf$tdm_mode == "rail"]),
+  names(tdm_rail_line_colors)
+)
+if (length(unmatched_rail_names) > 0) {
+  warning(
+    "Unrecognized TDM rail line NAME(s), falling back to a generic mode-aware ",
+    "color: ", paste(unmatched_rail_names, collapse = ", ")
+  )
+}
+
+tdm_bus_color_tiers <- tdm_bus_color_tier(tdm_routes_sf$tdm_mode, tdm_routes_sf$best_headway)
 tdm_routes_sf$tdm_color <- unname(ifelse(
-  tdm_routes_sf$tdm_mode %in% names(tdm_mode_colors),
-  tdm_mode_colors[tdm_routes_sf$tdm_mode],
-  default_tdm_mode_color
+  tdm_routes_sf$tdm_mode == "rail",
+  ifelse(
+    tdm_routes_sf$NAME %in% names(tdm_rail_line_colors),
+    tdm_rail_line_colors[tdm_routes_sf$NAME],
+    tdm_rail_fallback_color(tdm_routes_sf$MODE)
+  ),
+  ifelse(
+    tdm_bus_color_tiers %in% names(tdm_mode_colors),
+    tdm_mode_colors[tdm_bus_color_tiers],
+    default_tdm_mode_color
+  )
 ))
+
+# Stops colored to match their own route, the same way GTFS stops are
+# colored by their primary serving route's route_color (see stop_color in
+# R/gtfs_pipeline.R) -- previously TDM stops were flat black regardless of
+# mode/line. tdm_stops_sf's LINEID is the 1-based row position of its stop's
+# line within the SAME tdm_group's _PTLine table (see the line_id comment in
+# R/tdm_pipeline.R's read_group()); unlike GTFS, a TDM stop only ever serves
+# one line already (no "primary route out of several" ambiguity to resolve).
+stop_line_colors <- tdm_routes_sf |>
+  st_drop_geometry() |>
+  distinct(tdm_group, line_id, tdm_color)
+tdm_stops_sf <- tdm_stops_sf |>
+  left_join(stop_line_colors, by = c("tdm_group", "LINEID" = "line_id"))
+unmatched_stop_lines <- sum(is.na(tdm_stops_sf$tdm_color))
+if (unmatched_stop_lines > 0) {
+  warning(
+    unmatched_stop_lines, " TDM stop(s) reference a (tdm_group, LINEID) with ",
+    "no matching route -- falling back to the default gray stop color."
+  )
+}
+tdm_stops_sf$tdm_color <- ifelse(is.na(tdm_stops_sf$tdm_color), default_tdm_mode_color, tdm_stops_sf$tdm_color)
 
 all_tdm_years <- sort(unique(tdm_routes_sf$tdm_year))
 # The gdb also carries forecast-year groups (e.g. 2055UF) alongside the 2023
@@ -336,8 +452,16 @@ add_gtfs_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visibl
     )
 }
 
-# TDM lines are dashed and colored by mode (rail/BRT/core) so they read as
-# the model network regardless of which GTFS route colors sit nearby.
+# TDM lines are dashed (vs. GTFS's solid stroke) so the two networks stay
+# visually distinguishable even though tdm_color deliberately matches each
+# line's real-world GTFS route_color where one exists (see tdm_color's own
+# assignment above) -- intentionally *not* a from-GTFS-independent scheme.
+# No static legend: with 8 individually-colored rail lines plus 4 bus
+# tiers, hovering/clicking a line (tooltip = NAME, popup = LONGNAME below)
+# identifies it far more precisely than a bucketed color-swatch legend
+# would, and it keeps TDM symmetric with GTFS, which never had a legend
+# either and relies on the same tooltip/popup pattern (see
+# add_gtfs_layers()).
 # `cluster` is forced off in swipe mode -- see add_gtfs_layers().
 add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible",
                             stops_visibility = "visible", cluster = TRUE) {
@@ -359,7 +483,7 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
     map,
     id = "tdm_stops",
     source = stops_sf,
-    circle_color = "#000000",
+    circle_color = get_column("tdm_color"),
     circle_radius = stop_radius_expr,
     circle_stroke_color = "#ffffff",
     circle_stroke_width = 1,
@@ -370,14 +494,7 @@ add_tdm_layers <- function(map, routes_sf, stops_sf, lines_visibility = "visible
     map <- apply_cluster_paint_workaround(map, "tdm_stops", tdm_cluster_options())
   }
 
-  map |>
-    add_legend(
-      "TDM line type",
-      values = names(tdm_mode_colors),
-      colors = unname(tdm_mode_colors),
-      type = "categorical",
-      position = "bottom-right"
-    )
+  map
 }
 
 ui <- page_navbar(
