@@ -1,3 +1,9 @@
 .Rhistory
 .RData
 .Rproj.user/
+.Renviron
+
+# Fetched-on-demand historical GTFS zips (Mobility Database "By date"
+# source) -- distinct from _data/gtfs/, which holds the hand-curated,
+# committed snapshot set. These are just a local cache of live downloads.
+/_data/gtfs_cache/

@@ -10,6 +10,7 @@ suppressPackageStartupMessages({
 
 source("R/gtfs_pipeline.R")
 source("R/tdm_pipeline.R")
+source("R/mobility_database.R")
 source("R/icons.R")
 source("R/custom_inputs.R")
 
@@ -668,7 +669,8 @@ ui <- page_navbar(
                      control = input_switch("gtfs_enabled", NULL, value = TRUE)),
       sb_field("Source",
         segmented_input("gtfs_source",
-                        choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url"),
+                        choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url",
+                                    "By date" = "date"),
                         selected = "snapshot", label = "GTFS source")
       ),
       conditionalPanel(
@@ -687,6 +689,18 @@ ui <- page_navbar(
           div(
             textInput("gtfs_url", NULL, placeholder = "https://.../gtfs.zip"),
             actionButton("gtfs_url_load", "Load feed", class = "btn-sm btn-outline-primary")
+          ))
+      ),
+      # "By date" resolves via the Mobility Database API (R/mobility_database.R)
+      # instead of a hand-curated local snapshot -- fetches whichever historical
+      # UTA feed snapshot was valid closest to the picked date.
+      conditionalPanel(
+        "input.gtfs_source == 'date'",
+        sb_field("Date",
+          div(
+            dateInput("gtfs_date_picker", NULL, value = NULL,
+                      format = "M d, yyyy", width = "100%"),
+            actionButton("gtfs_date_load", "Find feed", class = "btn-sm btn-outline-primary")
           ))
       ),
       sb_field("Show",
@@ -894,11 +908,33 @@ server <- function(input, output, session) {
     })
   })
 
+  # Resolves the picked date to a historical UTA snapshot via Mobility
+  # Database (R/mobility_database.R), then hands the (possibly cached) zip
+  # to the same build_gtfs_layers() every other source uses. A separate
+  # tryCatch/notification per failure mode (no token configured, API
+  # request failure, download failure) since "which of those happened"
+  # matters for what the user should do next -- unlike the other three
+  # sources, this one has a real external dependency that can fail in ways
+  # a local file or direct download URL never would.
+  gtfs_date_data <- eventReactive(input$gtfs_date_load, {
+    req(input$gtfs_date_picker)
+    tryCatch({
+      resolved <- mdb_resolve_feed_url(input$gtfs_date_picker)
+      zip_path <- mdb_cached_download(resolved$dataset_id, resolved$hosted_url)
+      build_gtfs_layers(zip_path)
+    }, error = function(e) {
+      showNotification(paste("Could not fetch GTFS feed for that date:", conditionMessage(e)),
+                        type = "error", duration = 8)
+      NULL
+    })
+  })
+
   gtfs_data <- reactive({
     switch(req(input$gtfs_source),
       snapshot = gtfs_snapshot_data(),
       upload = gtfs_upload_data(),
-      url = gtfs_url_data()
+      url = gtfs_url_data(),
+      date = gtfs_date_data()
     )
   })
 
