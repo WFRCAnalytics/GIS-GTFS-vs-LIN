@@ -4,6 +4,10 @@
   import 'maplibre-gl/dist/maplibre-gl.css'
   import { addClusteredStopLayer, addGtfsRouteLayer, addTdmRouteLayer } from './layers'
   import { loadGtfsFromUpload } from '../sources/upload'
+  import { loadGtfsFromUrl } from '../sources/url'
+  import { loadGtfsFromDate } from '../sources/mobilityDatabase'
+  import { getMobilityDatabaseToken, setMobilityDatabaseToken } from '../storage/mobilityDatabaseToken'
+  import type { GtfsLayers } from '../gtfs/build'
 
   // Same Carto basemap the R app uses (free, no API key, light/dark pair) --
   // kept for visual continuity between the two apps.
@@ -14,6 +18,9 @@
   let mapLoaded = false
   let gtfsLoaded = false
   let gtfsError: string | null = null
+  let urlInput = ''
+  let dateInput = ''
+  let tokenInput = getMobilityDatabaseToken() ?? ''
 
   onMount(() => {
     map = new maplibregl.Map({
@@ -42,33 +49,70 @@
     map?.remove()
   })
 
-  async function onGtfsFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0]
-    if (!file || !map) return
+  function applyGtfsLayers(layers: GtfsLayers) {
+    if (!map) return
+    if (!gtfsLoaded) {
+      addGtfsRouteLayer(map, layers.routesGeoJSON)
+      addClusteredStopLayer(map, 'gtfs_stops', layers.stopsGeoJSON, 'stop_color', '#3E7C8B')
+      gtfsLoaded = true
+    } else {
+      ;(map.getSource('gtfs_routes') as maplibregl.GeoJSONSource).setData(layers.routesGeoJSON)
+      ;(map.getSource('gtfs_stops') as maplibregl.GeoJSONSource).setData(layers.stopsGeoJSON)
+    }
+  }
+
+  async function withGtfsErrorHandling(load: () => Promise<GtfsLayers>) {
     gtfsError = null
     try {
-      const layers = await loadGtfsFromUpload(file)
-      if (!gtfsLoaded) {
-        addGtfsRouteLayer(map, layers.routesGeoJSON)
-        addClusteredStopLayer(map, 'gtfs_stops', layers.stopsGeoJSON, 'stop_color', '#3E7C8B')
-        gtfsLoaded = true
-      } else {
-        ;(map.getSource('gtfs_routes') as maplibregl.GeoJSONSource).setData(layers.routesGeoJSON)
-        ;(map.getSource('gtfs_stops') as maplibregl.GeoJSONSource).setData(layers.stopsGeoJSON)
-      }
+      applyGtfsLayers(await load())
     } catch (err) {
       gtfsError = err instanceof Error ? err.message : String(err)
     }
+  }
+
+  function onGtfsFileChange(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    withGtfsErrorHandling(() => loadGtfsFromUpload(file))
+  }
+
+  function onUrlLoad() {
+    if (!urlInput) return
+    withGtfsErrorHandling(() => loadGtfsFromUrl(urlInput))
+  }
+
+  function onDateLoad() {
+    if (!dateInput) return
+    withGtfsErrorHandling(() => loadGtfsFromDate(new Date(dateInput)))
+  }
+
+  function onTokenSave() {
+    setMobilityDatabaseToken(tokenInput)
   }
 </script>
 
 <div class="map-container" bind:this={container}></div>
 
-<!-- Temporary GTFS Upload test control (Phase 3) -- real sidebar UI comes later. -->
-<div class="gtfs-upload">
+<!-- Temporary GTFS source test controls (Phases 3-4) -- real sidebar UI comes in Phase 5. -->
+<div class="gtfs-controls">
   <label>
-    GTFS zip:
+    Upload:
     <input type="file" accept=".zip" on:change={onGtfsFileChange} disabled={!mapLoaded} />
+  </label>
+  <label>
+    URL:
+    <input type="text" bind:value={urlInput} placeholder="https://.../gtfs.zip" disabled={!mapLoaded} />
+    <button on:click={onUrlLoad} disabled={!mapLoaded}>Load</button>
+  </label>
+  <label>
+    MDB token:
+    <input type="password" bind:value={tokenInput} placeholder="Mobility Database refresh token" />
+    <button on:click={onTokenSave}>Save</button>
+  </label>
+  <label>
+    Date:
+    <input type="date" bind:value={dateInput} disabled={!mapLoaded} />
+    <button on:click={onDateLoad} disabled={!mapLoaded}>Load</button>
   </label>
   {#if gtfsError}<p class="error">{gtfsError}</p>{/if}
 </div>
@@ -78,7 +122,7 @@
     position: absolute;
     inset: 0;
   }
-  .gtfs-upload {
+  .gtfs-controls {
     position: absolute;
     top: 10px;
     left: 10px;
@@ -88,9 +132,14 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     font-size: 13px;
     z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 340px;
   }
   .error {
     color: #be2036;
     margin: 4px 0 0;
+    max-width: 320px;
   }
 </style>
