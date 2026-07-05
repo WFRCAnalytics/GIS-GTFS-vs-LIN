@@ -10,8 +10,9 @@ Comparison here is **visual validation**, not automated route matching: there's 
 
 ## Repository contents
 
-- `app.R` — Shiny app comparing GTFS and TDM transit layers on a Carto Positron/Dark Matter basemap (the basemap follows light/dark mode automatically), either **overlaid** on one map or **swiped** side by side (`mapgl::compare()`). Every setting lives directly in a persistent sidebar, not a modal — GTFS source (a saved snapshot, an uploaded GTFS zip, or a live feed URL), an enable/disable switch for each dataset, TDM year (base year 2023 vs. forecast scenarios) and line type (rail/BRT/core), what each side shows (lines/stops/both), and Overlay/Swipe comparison mode. Swipe mode is only selectable once both datasets are enabled. The sidebar's own controls (segmented pickers, layer-toggle chips) are custom `Shiny.InputBinding` components (`www/app.js`/`R/custom_inputs.R`), not styled default Shiny inputs.
-- `R/gtfs_pipeline.R` — the shared GTFS extraction pipeline (flatten zip layout → `tidytransit::read_gtfs()` → shape-level routes + stops with route-color-derived stop colors). `app.R` calls it live for every GTFS source — a saved snapshot read straight from `_data/gtfs/`, an uploaded zip, or a downloaded feed URL — there's no pre-baked/cached copy to keep in sync; a snapshot is processed fresh each time it's selected, the same as an upload would be.
+- `app.R` — Shiny app comparing GTFS and TDM transit layers on a Carto Positron/Dark Matter basemap (the basemap follows light/dark mode automatically), either **overlaid** on one map or **swiped** side by side (`mapgl::compare()`). Every setting lives directly in a persistent sidebar, not a modal — GTFS source (a saved snapshot, an uploaded GTFS zip, a live feed URL, or a date picker that resolves to a historical UTA snapshot via the Mobility Database API), an enable/disable switch for each dataset, TDM year (base year 2023 vs. forecast scenarios) and line type (rail/BRT/core), what each side shows (lines/stops/both), and Overlay/Swipe comparison mode. Swipe mode is only selectable once both datasets are enabled. The sidebar's own controls (segmented pickers, layer-toggle chips) are custom `Shiny.InputBinding` components (`www/app.js`/`R/custom_inputs.R`), not styled default Shiny inputs.
+- `R/gtfs_pipeline.R` — the shared GTFS extraction pipeline (flatten zip layout → `tidytransit::read_gtfs()` → shape-level routes + stops with route-color-derived stop colors). `app.R` calls it live for every GTFS source — a saved snapshot read straight from `_data/gtfs/`, an uploaded zip, a downloaded feed URL, or a zip resolved via `R/mobility_database.R` — there's no pre-baked/cached copy to keep in sync; a snapshot is processed fresh each time it's selected, the same as an upload would be.
+- `R/mobility_database.R` — resolves a picked calendar date to the historical UTA GTFS snapshot that was valid closest to it, via [Mobility Database](https://mobilitydatabase.org)'s API (feed `mdb-2349`), then downloads it the same way the URL source does. Fetched zips are cached on disk under `_data/gtfs_cache/` (gitignored — distinct from the hand-curated `_data/gtfs/` snapshot set) keyed by the resolved dataset's own ID, so re-picking a date already fetched doesn't re-hit the API. Requires a `MOBILITY_DATABASE_REFRESH_TOKEN` environment variable — see **Setup** below.
 - `R/tdm_pipeline.R` — the shared TDM extraction pipeline: reads the transit line/stop layers out of the zipped file geodatabase, discovering transit groups dynamically (via `CITILABS_TRANSITGROUPS`) so it keeps working as more are added. Like GTFS, `app.R` calls it live at startup — no pre-baked/cached geojson to keep in sync.
 - `_data/gtfs/` — GTFS snapshots (original, unmodified zip downloads), one per feed publication date. This is the only GTFS data committed to the repo — no derived/processed copies.
 - `_data/tdm/` — TDM transit network:
@@ -45,14 +46,23 @@ git add _brand && git commit -m "Update wfrc-brand submodule"
 
 If deploying this app (Posit Connect, shinyapps.io, etc.), make sure the submodule is initialized in whatever environment runs the deploy — deployment tooling bundles whatever files are actually present on disk, and won't fetch an uninitialized submodule for you.
 
+### Mobility Database API (for the "By date" GTFS source)
+
+The date-picker GTFS source (`R/mobility_database.R`) calls the [Mobility Database](https://mobilitydatabase.org) API to resolve a picked date to a historical UTA snapshot. This needs a personal refresh token, which is a secret and must never be committed:
+
+1. Create a free account at [mobilitydatabase.org](https://mobilitydatabase.org) and copy the refresh token from your Account Details page.
+2. Set it as an environment variable named `MOBILITY_DATABASE_REFRESH_TOKEN` wherever the app runs (e.g. in `.Renviron`, which is already outside version control, or your deployment platform's secrets manager) — never in `app.R` or any committed file.
+3. Without this variable set, every other GTFS source still works; only the "By date" source will show a clear error notification asking for it.
+
 ## Workflow
 
 1. Download/refresh a GTFS feed into `_data/gtfs/` — no separate processing step needed, the app reads the zips directly and reprocesses on demand.
 2. Update `_data/tdm/PS_RTP_Transit_Stops.zip` with the latest model export — no separate processing step needed here either.
-3. Run the app (`shiny::runApp()`). Every setting is in the sidebar from the start — pick a GTFS source (saved snapshot / upload / feed URL), TDM year and line type, what each side shows, and Overlay or Swipe comparison mode — then visually compare route alignment and stop coverage between the two datasets.
+3. Run the app (`shiny::runApp()`). Every setting is in the sidebar from the start — pick a GTFS source (saved snapshot / upload / feed URL / by-date lookup), TDM year and line type, what each side shows, and Overlay or Swipe comparison mode — then visually compare route alignment and stop coverage between the two datasets.
 
 ## Requirements
 
-- R with [renv](https://rstudio.github.io/renv/) — run `renv::restore()` to install the pinned package versions from `renv.lock` (`sf`, `tidytransit`, `mapgl`, `shiny`, `dplyr`, `bslib`).
+- R with [renv](https://rstudio.github.io/renv/) — run `renv::restore()` to install the pinned package versions from `renv.lock` (`sf`, `tidytransit`, `mapgl`, `shiny`, `dplyr`, `bslib`, `httr2`).
 - The `_brand/` git submodule initialized — see **Setup** above.
+- `MOBILITY_DATABASE_REFRESH_TOKEN` set, only if using the "By date" GTFS source — see **Setup** above. Every other GTFS source works without it.
 - [QGIS](https://qgis.org/) only if opening the legacy `gtfs-vs-tdm.qgz` project.
