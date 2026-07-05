@@ -1,4 +1,5 @@
-import { buildGtfsLayers, type GtfsLayers } from "../gtfs/build";
+import type { GtfsLayers } from "../gtfs/build";
+import { parseGtfsInWorker } from "../gtfs/parseInWorker";
 
 /**
  * Fetches an arbitrary GTFS feed URL directly from the browser -- no proxy,
@@ -29,5 +30,5 @@ export async function loadGtfsFromUrl(url: string): Promise<GtfsLayers> {
     throw new Error(`Feed URL returned HTTP ${res.status}.`);
   }
   const buffer = await res.arrayBuffer();
-  return buildGtfsLayers(buffer);
+  return parseGtfsInWorker(buffer);
 }

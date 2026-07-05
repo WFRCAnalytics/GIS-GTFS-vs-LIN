@@ -7,7 +7,8 @@
 // Storage) are CORS-open too -- the one thing it *can't* do statically is
 // hold a secret, so the user brings their own free token instead of this
 // app shipping a shared one (see ../storage/mobilityDatabaseToken.ts).
-import { buildGtfsLayers, type GtfsLayers } from "../gtfs/build";
+import type { GtfsLayers } from "../gtfs/build";
+import { parseGtfsInWorker } from "../gtfs/parseInWorker";
 import { getMobilityDatabaseToken } from "../storage/mobilityDatabaseToken";
 
 const MDB_BASE_URL = "https://api.mobilitydatabase.org/v1";
@@ -134,5 +135,8 @@ export async function loadGtfsFromDate(targetDate: Date): Promise<GtfsLayers> {
     zipCache.set(resolved.datasetId, zipBuffer);
   }
 
-  return buildGtfsLayers(zipBuffer);
+  // .slice(0) copies rather than reuses the cached buffer -- parseGtfsInWorker
+  // transfers (detaches) whatever ArrayBuffer it's given, which would
+  // otherwise silently empty out zipCache's entry after the first use.
+  return parseGtfsInWorker(zipBuffer.slice(0));
 }
