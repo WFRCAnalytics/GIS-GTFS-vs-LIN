@@ -107,3 +107,22 @@ export function addTdmRouteLayer(map: MapLibreMap, data: GeoJSON.FeatureCollecti
     },
   });
 }
+
+/**
+ * GTFS route lines (matches add_gtfs_layers() in app.R): solid, colored by
+ * the feed's own route_color -- no dasharray, so GTFS and TDM stay visually
+ * distinguishable from each other even where their colors coincide.
+ */
+export function addGtfsRouteLayer(map: MapLibreMap, data: GeoJSON.FeatureCollection, visible = true) {
+  map.addSource("gtfs_routes", { type: "geojson", data });
+  map.addLayer({
+    id: "gtfs_routes",
+    type: "line",
+    source: "gtfs_routes",
+    layout: { visibility: visible ? "visible" : "none" },
+    paint: {
+      "line-color": ["get", "route_color"],
+      "line-width": 3,
+    },
+  });
+}
