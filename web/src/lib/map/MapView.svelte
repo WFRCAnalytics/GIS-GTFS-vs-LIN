@@ -1,145 +1,143 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import maplibregl from 'maplibre-gl'
+  import type { Map as MapLibreMap } from 'maplibre-gl'
+  import Compare from '@maplibre/maplibre-gl-compare'
   import 'maplibre-gl/dist/maplibre-gl.css'
-  import { addClusteredStopLayer, addGtfsRouteLayer, addTdmRouteLayer } from './layers'
-  import { loadGtfsFromUpload } from '../sources/upload'
-  import { loadGtfsFromUrl } from '../sources/url'
-  import { loadGtfsFromDate } from '../sources/mobilityDatabase'
-  import { getMobilityDatabaseToken, setMobilityDatabaseToken } from '../storage/mobilityDatabaseToken'
-  import type { GtfsLayers } from '../gtfs/build'
+  import '@maplibre/maplibre-gl-compare/dist/maplibre-gl-compare.css'
+  import { createMap, cartoStyle } from './setup'
+  import { applyLayers, applyVisibility, type MapLayerData } from './applyLayers'
+  import { appState } from '../store/appState.svelte'
+  import ValidityBadge from '../../components/ValidityBadge.svelte'
 
-  // Same Carto basemap the R app uses (free, no API key, light/dark pair) --
-  // kept for visual continuity between the two apps.
-  const CARTO_LIGHT = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
+  let overlayContainer: HTMLDivElement
+  let gtfsContainer: HTMLDivElement
+  let tdmContainer: HTMLDivElement
+  let compareContainer: HTMLDivElement
 
-  let container: HTMLDivElement
-  let map: maplibregl.Map | undefined
-  let mapLoaded = false
-  let gtfsLoaded = false
-  let gtfsError: string | null = null
-  let urlInput = ''
-  let dateInput = ''
-  let tokenInput = getMobilityDatabaseToken() ?? ''
+  let overlayMap: MapLibreMap | undefined
+  let gtfsMap: MapLibreMap | undefined
+  let tdmMap: MapLibreMap | undefined
+  let compareInstance: Compare | undefined
+
+  let overlayReady = $state(false)
+  let swipeReady = $state(false)
+
+  let tdmData: MapLayerData = { tdmRoutes: null, tdmStops: null }
 
   onMount(() => {
-    map = new maplibregl.Map({
-      container,
-      style: CARTO_LIGHT,
-      center: [-111.891, 40.7608], // Salt Lake City
-      zoom: 9,
-    })
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
-    map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-left')
-
-    map.on('load', async () => {
-      mapLoaded = true
+    overlayMap = createMap(overlayContainer, appState.darkMode)
+    overlayMap.on('load', async () => {
+      overlayReady = true
       const [routesRes, stopsRes] = await Promise.all([
         fetch(`${import.meta.env.BASE_URL}data/tdm-routes.geojson`),
         fetch(`${import.meta.env.BASE_URL}data/tdm-stops.geojson`),
       ])
-      const routes = await routesRes.json()
-      const stops = await stopsRes.json()
-      addTdmRouteLayer(map!, routes)
-      addClusteredStopLayer(map!, 'tdm_stops', stops, 'tdm_color', '#333333')
+      tdmData = { tdmRoutes: await routesRes.json(), tdmStops: await stopsRes.json() }
+      applyLayers(overlayMap!, 'both', tdmData)
     })
   })
 
   onDestroy(() => {
-    map?.remove()
+    compareInstance?.remove()
+    overlayMap?.remove()
+    gtfsMap?.remove()
+    tdmMap?.remove()
   })
 
-  function applyGtfsLayers(layers: GtfsLayers) {
-    if (!map) return
-    if (!gtfsLoaded) {
-      addGtfsRouteLayer(map, layers.routesGeoJSON)
-      addClusteredStopLayer(map, 'gtfs_stops', layers.stopsGeoJSON, 'stop_color', '#3E7C8B')
-      gtfsLoaded = true
-    } else {
-      ;(map.getSource('gtfs_routes') as maplibregl.GeoJSONSource).setData(layers.routesGeoJSON)
-      ;(map.getSource('gtfs_stops') as maplibregl.GeoJSONSource).setData(layers.stopsGeoJSON)
+  function setupSwipeMaps() {
+    if (swipeReady) return
+    gtfsMap = createMap(gtfsContainer, appState.darkMode)
+    tdmMap = createMap(tdmContainer, appState.darkMode)
+    let loaded = 0
+    const onBothLoaded = () => {
+      loaded++
+      if (loaded < 2) return
+      swipeReady = true
+      applyLayers(gtfsMap!, 'gtfs', tdmData)
+      applyLayers(tdmMap!, 'tdm', tdmData)
+      compareInstance = new Compare(gtfsMap!, tdmMap!, compareContainer, { orientation: 'vertical' })
     }
+    gtfsMap.on('load', onBothLoaded)
+    tdmMap.on('load', onBothLoaded)
   }
 
-  async function withGtfsErrorHandling(load: () => Promise<GtfsLayers>) {
-    gtfsError = null
-    try {
-      applyGtfsLayers(await load())
-    } catch (err) {
-      gtfsError = err instanceof Error ? err.message : String(err)
+  // Compare mode: lazily bootstrap the two swipe maps the first time it's
+  // selected, then just toggle container visibility afterward -- same
+  // "session-long singleton, nothing to re-bootstrap" approach app.R uses.
+  $effect(() => {
+    if (appState.compareMode === 'swipe' && appState.bothEnabled) {
+      setupSwipeMaps()
     }
-  }
+  })
 
-  function onGtfsFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0]
-    if (!file) return
-    withGtfsErrorHandling(() => loadGtfsFromUpload(file))
-  }
+  // Full layer rebuild whenever the underlying data or the TDM year/mode
+  // filter changes (filter changes need a source re-set for stops, see
+  // filterTdmStopsData()'s comment, so a full rebuild is simplest here).
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- establishes the reactive dependency
+    ;[appState.gtfsRoutesData, appState.gtfsStopsData, appState.tdmYear, appState.tdmModes]
+    if (overlayReady) applyLayers(overlayMap!, 'both', tdmData)
+    if (swipeReady) {
+      applyLayers(gtfsMap!, 'gtfs', tdmData)
+      applyLayers(tdmMap!, 'tdm', tdmData)
+    }
+  })
 
-  function onUrlLoad() {
-    if (!urlInput) return
-    withGtfsErrorHandling(() => loadGtfsFromUrl(urlInput))
-  }
+  // Cheap visibility-only toggles (enable switches, Show chips).
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    ;[appState.gtfsEnabled, appState.gtfsDisplay, appState.tdmEnabled, appState.tdmDisplay]
+    if (overlayReady) applyVisibility(overlayMap!)
+    if (swipeReady) {
+      applyVisibility(gtfsMap!)
+      applyVisibility(tdmMap!)
+    }
+  })
 
-  function onDateLoad() {
-    if (!dateInput) return
-    withGtfsErrorHandling(() => loadGtfsFromDate(new Date(dateInput)))
-  }
-
-  function onTokenSave() {
-    setMobilityDatabaseToken(tokenInput)
-  }
+  // Dark mode: MapLibre's setStyle() diffs away any layer/source that isn't
+  // part of either style's own declared layers, so our custom layers don't
+  // survive a style swap -- re-apply everything once the new style loads.
+  $effect(() => {
+    const dark = appState.darkMode
+    const style = cartoStyle(dark)
+    if (overlayMap) {
+      overlayMap.once('style.load', () => applyLayers(overlayMap!, 'both', tdmData))
+      overlayMap.setStyle(style)
+    }
+    if (gtfsMap && tdmMap) {
+      gtfsMap.once('style.load', () => applyLayers(gtfsMap!, 'gtfs', tdmData))
+      tdmMap.once('style.load', () => applyLayers(tdmMap!, 'tdm', tdmData))
+      gtfsMap.setStyle(style)
+      tdmMap.setStyle(style)
+    }
+  })
 </script>
 
-<div class="map-container" bind:this={container}></div>
-
-<!-- Temporary GTFS source test controls (Phases 3-4) -- real sidebar UI comes in Phase 5. -->
-<div class="gtfs-controls">
-  <label>
-    Upload:
-    <input type="file" accept=".zip" on:change={onGtfsFileChange} disabled={!mapLoaded} />
-  </label>
-  <label>
-    URL:
-    <input type="text" bind:value={urlInput} placeholder="https://.../gtfs.zip" disabled={!mapLoaded} />
-    <button on:click={onUrlLoad} disabled={!mapLoaded}>Load</button>
-  </label>
-  <label>
-    MDB token:
-    <input type="password" bind:value={tokenInput} placeholder="Mobility Database refresh token" />
-    <button on:click={onTokenSave}>Save</button>
-  </label>
-  <label>
-    Date:
-    <input type="date" bind:value={dateInput} disabled={!mapLoaded} />
-    <button on:click={onDateLoad} disabled={!mapLoaded}>Load</button>
-  </label>
-  {#if gtfsError}<p class="error">{gtfsError}</p>{/if}
+<div class="map-view">
+  <div class="pane" class:hidden={appState.compareMode !== 'overlay'} bind:this={overlayContainer}></div>
+  <div class="pane" class:hidden={appState.compareMode !== 'swipe'} bind:this={compareContainer}>
+    <div class="compare-half" bind:this={gtfsContainer}></div>
+    <div class="compare-half" bind:this={tdmContainer}></div>
+  </div>
+  <ValidityBadge />
 </div>
 
 <style>
-  .map-container {
+  .map-view {
+    position: relative;
+    flex: 1;
+    height: 100%;
+  }
+  .pane {
     position: absolute;
     inset: 0;
   }
-  .gtfs-controls {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: white;
-    padding: 8px 12px;
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    font-size: 13px;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-width: 340px;
+  .pane.hidden {
+    visibility: hidden;
+    pointer-events: none;
   }
-  .error {
-    color: #be2036;
-    margin: 4px 0 0;
-    max-width: 320px;
+  .compare-half {
+    position: absolute;
+    inset: 0;
   }
 </style>

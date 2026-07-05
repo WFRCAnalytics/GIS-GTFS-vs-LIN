@@ -252,6 +252,10 @@ async function main() {
     const color = colorByGroupAndLineId.get(key);
     if (color == null) unmatchedStops++;
     f.properties.tdm_color = color ?? DEFAULT_MODE_COLOR;
+    // Needed for the app's Year/Line-types filtering (filterTdmStopsData()
+    // in web/src/lib/map/layers.ts) -- routes already get these above.
+    f.properties.tdm_mode = parseTdmMode(f.properties.tdm_group);
+    f.properties.tdm_year = parseTdmYear(f.properties.tdm_group);
   }
   if (unmatchedStops > 0) {
     console.warn(`WARNING: ${unmatchedStops} stop(s) had no matching route color, used default gray.`);

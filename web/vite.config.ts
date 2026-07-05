@@ -7,4 +7,14 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 export default defineConfig({
   base: '/GIS-GTFS-vs-LIN/',
   plugins: [svelte()],
+  resolve: {
+    alias: {
+      // @maplibre/maplibre-gl-compare uses Node's EventEmitter internally.
+      // Vite externalizes bare Node built-ins for the browser by default,
+      // which leaves `events` unresolved at runtime ("EventEmitter is not
+      // a constructor", confirmed live) -- alias it to the userland
+      // browser-compatible `events` package instead.
+      events: 'events',
+    },
+  },
 })

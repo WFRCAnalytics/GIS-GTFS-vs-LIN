@@ -1,0 +1,45 @@
+/* Design tokens ported from the R app's www/custom.css + _brand/wfrc-brand/brand.yml
+   (a one-time manual copy of the values, not a live brand.yml parser -- see the plan). */
+:root {
+  --wfrc-blue: #023c5b;
+  --wfrc-secondary-blue: #52b6d5;
+  --wfrc-yellow: #f8b93e;
+  --wc-light-rail: #3762ad;
+
+  --bg: #ffffff;
+  --body-bg: #f5f9fb;
+  --text: #151515;
+  --label: #6a7682;
+  --section: #33424e;
+  --border: rgba(2, 60, 91, 0.12);
+  --hair: rgba(2, 60, 91, 0.09);
+  --card-shadow: 0 1px 2px rgba(2, 60, 91, 0.04);
+  --radius: 9px;
+}
+
+[data-theme="dark"] {
+  --bg: #12222c;
+  --body-bg: #081b26;
+  --text: #f0f4f6;
+  --label: #94a2ae;
+  --section: #d6dfe6;
+  --border: rgba(255, 255, 255, 0.14);
+  --hair: rgba(255, 255, 255, 0.1);
+  --card-shadow: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: "Inter", system-ui, sans-serif;
+  background: var(--body-bg);
+  color: var(--text);
+}

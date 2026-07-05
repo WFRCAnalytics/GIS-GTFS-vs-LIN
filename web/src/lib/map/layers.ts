@@ -126,3 +126,46 @@ export function addGtfsRouteLayer(map: MapLibreMap, data: GeoJSON.FeatureCollect
     },
   });
 }
+
+export function setLayerVisibility(map: MapLibreMap, layerId: string, visible: boolean) {
+  if (!map.getLayer(layerId)) return;
+  map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+}
+
+/**
+ * Filters TDM *routes* to a given year + set of line-type modes via
+ * MapLibre's own layer `filter` (matches app.R's tdm_year/input$tdm_modes
+ * filtering) -- fine for an unclustered line layer, since a layer filter
+ * only affects which already-drawn features are visible, not any
+ * aggregation. Stops need different handling -- see filterTdmStopsData().
+ */
+export function setTdmRouteFilter(map: MapLibreMap, year: string, modes: string[]) {
+  if (!map.getLayer("tdm_routes")) return;
+  map.setFilter("tdm_routes", [
+    "all",
+    ["==", ["get", "tdm_year"], year],
+    ["in", ["get", "tdm_mode"], ["literal", modes]],
+  ]);
+}
+
+/**
+ * TDM stops are clustered (see addClusteredStopLayer) -- MapLibre's
+ * built-in Supercluster runs over the *source's full data* before any
+ * layer-level `filter` is applied, so a layer filter alone would leave
+ * cluster counts wrong (still counting year/mode-filtered-out points).
+ * The correct fix is what app.R's own `set_source()` observers do too:
+ * filter the underlying data itself and re-set the source, so clustering
+ * recomputes over only the features that should actually be shown.
+ */
+export function filterTdmStopsData(
+  allStops: GeoJSON.FeatureCollection,
+  year: string,
+  modes: string[],
+): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: allStops.features.filter(
+      (f) => f.properties?.tdm_year === year && modes.includes(f.properties?.tdm_mode),
+    ),
+  };
+}
