@@ -1,6 +1,12 @@
 <script lang="ts">
   import { appState, type GtfsSource } from '../lib/store/appState.svelte'
-  import { loadGtfsUpload, loadGtfsUrl, loadGtfsDate } from '../lib/store/gtfsLoader'
+  import {
+    loadGtfsUpload,
+    loadGtfsUrl,
+    loadGtfsDate,
+    confirmLargeFeedLoad,
+    cancelLargeFeedLoad,
+  } from '../lib/store/gtfsLoader'
   import { getMobilityDatabaseToken, setMobilityDatabaseToken } from '../lib/storage/mobilityDatabaseToken'
   import SegmentedControl from './SegmentedControl.svelte'
   import ChipGroup from './ChipGroup.svelte'
@@ -103,7 +109,25 @@
       </div>
     {/if}
 
-    {#if appState.gtfsError}<p class="error">{appState.gtfsError}</p>{/if}
+    {#if appState.gtfsPendingLarge}
+      {@const mb = (appState.gtfsPendingLarge.totalHeavyBytes / (1024 * 1024)).toFixed(1)}
+      <div class="large-feed-warning">
+        <p class="hint">
+          This feed has an estimated <strong>{appState.gtfsPendingLarge.estimatedRows.toLocaleString()} stop-time rows</strong>
+          (≈{mb} MB uncompressed). The browser holds the entire feed in memory, so a feed this size may load slowly
+          or crash the tab.
+        </p>
+        <p class="hint">Consider a smaller or single-agency feed. You can still try to load it.</p>
+        <div class="row">
+          <button class="secondary" onclick={cancelLargeFeedLoad}>Cancel</button>
+          <button onclick={confirmLargeFeedLoad}>Try anyway</button>
+        </div>
+      </div>
+    {:else if appState.gtfsLoading}
+      <p class="hint">{appState.gtfsProgress ?? 'Loading…'}</p>
+    {:else if appState.gtfsError}
+      <p class="error">{appState.gtfsError}</p>
+    {/if}
 
     <div class="sb-field">
       <span class="field-label">Show</span>
@@ -205,6 +229,23 @@
     background: var(--wfrc-blue);
     color: white;
     cursor: pointer;
+  }
+  button.secondary {
+    flex: 1;
+    background: transparent;
+    border-color: var(--border);
+    color: var(--label);
+  }
+  .large-feed-warning {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border: 1px solid var(--wfrc-yellow);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .large-feed-warning .row button {
+    flex: 1;
   }
   .link-button {
     background: none;

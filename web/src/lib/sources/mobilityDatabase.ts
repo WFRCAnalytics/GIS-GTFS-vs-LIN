@@ -7,8 +7,6 @@
 // Storage) are CORS-open too -- the one thing it *can't* do statically is
 // hold a secret, so the user brings their own free token instead of this
 // app shipping a shared one (see ../storage/mobilityDatabaseToken.ts).
-import type { GtfsLayers } from "../gtfs/build";
-import { parseGtfsInWorker } from "../gtfs/parseInWorker";
 import { getMobilityDatabaseToken } from "../storage/mobilityDatabaseToken";
 
 const MDB_BASE_URL = "https://api.mobilitydatabase.org/v1";
@@ -118,7 +116,7 @@ async function resolveMobilityDatabaseFeedUrl(targetDate: Date, refreshToken: st
 // zip twice in one page session if a user picks the same date again).
 const zipCache = new Map<string, ArrayBuffer>();
 
-export async function loadGtfsFromDate(targetDate: Date): Promise<GtfsLayers> {
+export async function resolveGtfsZipFromDate(targetDate: Date): Promise<ArrayBuffer> {
   const token = getMobilityDatabaseToken();
   if (!token) {
     throw new Error(
@@ -138,5 +136,5 @@ export async function loadGtfsFromDate(targetDate: Date): Promise<GtfsLayers> {
   // .slice(0) copies rather than reuses the cached buffer -- parseGtfsInWorker
   // transfers (detaches) whatever ArrayBuffer it's given, which would
   // otherwise silently empty out zipCache's entry after the first use.
-  return parseGtfsInWorker(zipBuffer.slice(0));
+  return zipBuffer.slice(0);
 }

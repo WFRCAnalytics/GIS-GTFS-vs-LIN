@@ -4,24 +4,27 @@
 // unrelated to Cloudflare Workers despite the shared name). Same idea as
 // GTFSx's own gtfsImport.worker.ts (studied for approach only, AGPL-3.0 --
 // see inspect.ts's comment), just for our simpler single-feed-in,
-// GeoJSON-out pipeline instead of their full editable-store import.
-import { buildGtfsLayers } from "./build";
+// GeoJSON-out pipeline instead of their full editable-store import. No
+// size gating happens in here at all -- that's the caller's job (see
+// gtfsLoader.ts), exactly like GTFSx's own parseGtfsInWorker() has zero
+// awareness of inspectGtfsZip()/isLarge.
+import { buildGtfsLayers, type GtfsLayers } from "./build";
 
 export interface GtfsParseRequest {
   zipData: ArrayBuffer | Blob;
 }
 
 export type GtfsParseResponse =
-  | { ok: true; layers: Awaited<ReturnType<typeof buildGtfsLayers>> }
-  | { ok: false; error: string };
+  | { type: "progress"; phase: string; rows?: number }
+  | { type: "result"; layers: GtfsLayers }
+  | { type: "error"; message: string };
 
 self.onmessage = async (e: MessageEvent<GtfsParseRequest>) => {
+  const post = (msg: GtfsParseResponse) => self.postMessage(msg);
   try {
-    const layers = await buildGtfsLayers(e.data.zipData);
-    const response: GtfsParseResponse = { ok: true, layers };
-    self.postMessage(response);
+    const layers = await buildGtfsLayers(e.data.zipData, (phase, rows) => post({ type: "progress", phase, rows }));
+    post({ type: "result", layers });
   } catch (err) {
-    const response: GtfsParseResponse = { ok: false, error: err instanceof Error ? err.message : String(err) };
-    self.postMessage(response);
+    post({ type: "error", message: err instanceof Error ? err.message : String(err) });
   }
 };

@@ -1,6 +1,3 @@
-import type { GtfsLayers } from "../gtfs/build";
-import { parseGtfsInWorker } from "../gtfs/parseInWorker";
-
 /**
  * Fetches an arbitrary GTFS feed URL directly from the browser -- no proxy,
  * per the "no backend at all" decision (see the plan file). This is
@@ -14,7 +11,7 @@ import { parseGtfsInWorker } from "../gtfs/parseInWorker";
  * claiming certainty -- it's a reasonable guess, not something this code
  * can actually detect.
  */
-export async function loadGtfsFromUrl(url: string): Promise<GtfsLayers> {
+export async function resolveGtfsZipFromUrl(url: string): Promise<ArrayBuffer> {
   let res: Response;
   try {
     res = await fetch(url);
@@ -29,6 +26,5 @@ export async function loadGtfsFromUrl(url: string): Promise<GtfsLayers> {
   if (!res.ok) {
     throw new Error(`Feed URL returned HTTP ${res.status}.`);
   }
-  const buffer = await res.arrayBuffer();
-  return parseGtfsInWorker(buffer);
+  return res.arrayBuffer();
 }
