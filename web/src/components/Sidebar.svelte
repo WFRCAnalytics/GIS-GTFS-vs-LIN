@@ -8,6 +8,7 @@
     cancelLargeFeedLoad,
   } from '../lib/store/gtfsLoader'
   import { getMobilityDatabaseToken, setMobilityDatabaseToken } from '../lib/storage/mobilityDatabaseToken'
+  import { TDM_MODE_LABELS } from '../lib/tdm/modeLabels'
   import SegmentedControl from './SegmentedControl.svelte'
   import ChipGroup from './ChipGroup.svelte'
   import LayerCard from './LayerCard.svelte'
@@ -17,19 +18,15 @@
     { label: 'Stops', value: 'stops' as const },
   ]
   const gtfsSourceChoices: { label: string; value: GtfsSource }[] = [
-    { label: 'Upload', value: 'upload' },
     { label: 'URL', value: 'url' },
     { label: 'By date', value: 'date' },
+    { label: 'Upload', value: 'upload' },
   ]
-  const allTdmModes = [
-    { label: 'rail', value: 'rail' },
-    { label: 'brt', value: 'brt' },
-    { label: 'core', value: 'core' },
-    { label: 'express', value: 'express' },
-    { label: 'local', value: 'local' },
-  ]
+  const allTdmModes = Object.entries(TDM_MODE_LABELS).map(([value, label]) => ({ label, value }))
 
-  let urlInput = $state('')
+  // Pre-filled with UTA's own live feed URL -- the common case is loading
+  // UTA's current feed, not an arbitrary agency's (matches app.R's default).
+  let urlInput = $state('https://gtfsfeed.rideuta.com/GTFS.zip')
   let dateInput = $state('')
   let tokenInput = $state(getMobilityDatabaseToken() ?? '')
   let showSettings = $state(false)
@@ -72,12 +69,7 @@
       <SegmentedControl choices={gtfsSourceChoices} bind:value={appState.gtfsSource} />
     </div>
 
-    {#if appState.gtfsSource === 'upload'}
-      <div class="sb-field">
-        <span class="field-label">GTFS zip file</span>
-        <input type="file" accept=".zip" onchange={onFileChange} />
-      </div>
-    {:else if appState.gtfsSource === 'url'}
+    {#if appState.gtfsSource === 'url'}
       <div class="sb-field">
         <span class="field-label">Feed URL</span>
         <div class="row">
@@ -86,7 +78,7 @@
         </div>
         <p class="hint">Works only if the feed's server allows cross-origin browser requests (CORS) -- many don't. Use Upload if this fails.</p>
       </div>
-    {:else}
+    {:else if appState.gtfsSource === 'date'}
       <div class="sb-field">
         <span class="field-label">Date</span>
         <div class="row">
@@ -106,6 +98,11 @@
             stored only in this browser.
           </p>
         {/if}
+      </div>
+    {:else}
+      <div class="sb-field">
+        <span class="field-label">GTFS zip file</span>
+        <input type="file" accept=".zip" onchange={onFileChange} />
       </div>
     {/if}
 
@@ -138,7 +135,7 @@
   <LayerCard accent="var(--wc-light-rail)" label="TDM" bind:enabled={appState.tdmEnabled}>
     <div class="sb-field-row">
       <div class="sb-field">
-        <span class="field-label">Year</span>
+        <span class="field-label">Scenario</span>
         <select bind:value={appState.tdmYear}>
           <option value="2023">2023</option>
           <option value="2055UF">2055UF</option>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appState } from '../lib/store/appState.svelte'
   import { formatValidityRange } from '../lib/format/validityRange'
+  import { tdmModeLabel } from '../lib/tdm/modeLabels'
 
   let gtfsPart = $derived(
     !appState.gtfsEnabled
@@ -10,7 +11,9 @@
         : formatValidityRange(appState.gtfsValidityStart, appState.gtfsValidityEnd) || 'No feed loaded',
   )
   let tdmPart = $derived(
-    !appState.tdmEnabled ? 'Off' : `${appState.tdmYear} (${[...appState.tdmModes].join(', ')})`,
+    !appState.tdmEnabled
+      ? 'Off'
+      : `${appState.tdmYear} (${[...appState.tdmModes].map(tdmModeLabel).join(', ')})`,
   )
 </script>
 

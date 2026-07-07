@@ -12,7 +12,9 @@ export type ShowLayer = "lines" | "stops";
 class AppState {
   gtfsEnabled = $state(true);
   tdmEnabled = $state(true);
-  gtfsSource = $state<GtfsSource>("upload");
+  // Defaults to URL (pre-filled with UTA's own feed in Sidebar.svelte) --
+  // the common case is loading UTA's current feed, no file to pick.
+  gtfsSource = $state<GtfsSource>("url");
   gtfsDisplay = $state<Set<ShowLayer>>(new Set(["lines", "stops"]));
   tdmDisplay = $state<Set<ShowLayer>>(new Set(["lines", "stops"]));
 
