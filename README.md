@@ -18,9 +18,20 @@ Comparison here is **visual validation**, not automated route matching: there's 
 - `_data/tdm/` — TDM transit network:
   - `PS_RTP_Transit_Stops.zip` — the model's zipped file geodatabase (read via GDAL's `/vsizip/` at the nested path `PS_RTP_Transit_Stops.zip/PS_RTP_Transit_Stops/WFv1000_MasterNet_20260430.gdb` — the `.gdb` sits one folder deeper in this export than the previous one). Eight 2023 base-year transit groups (`rail_2023`, `wfrc_brt_2023`, `mag_brt_2023`, `mag_exp_2023`, `mag_lcl_2023`, `wfrc_og_lcl_2023`, `wfrc_sl_exp_2023`, `wfrc_sl_lcl_2023` — 80 routes total, including MAG/WFRC local and express bus), plus three 2055 forecast-scenario groups (`rail_2055UF`, `wfrc_brt_2055UF`, `wfrc_core_2055UF`). The app defaults to 2023 only since comparing a forecast scenario against present-day GTFS isn't meaningful, but the forecast groups stay selectable. This is the only TDM data committed to the repo — no derived/processed copies (TDM upload support, mirroring GTFS's, is planned but not yet implemented). The earlier `WFv1000_MasterNet_20260430.gdb.zip` (rail + one BRT line only, a placeholder subset) is superseded by this file.
 - `_brand/` — **git submodule** → [`WFRCAnalytics/wfrc-brand`](https://github.com/WFRCAnalytics/wfrc-brand), WFRC's official brand.yml (colors, fonts, logos). `app.R` points `bs_theme(brand = ...)` directly at `_brand/_extensions/wfrc-brand/brand.yml` (that repo is a Quarto-extension layout, not a root-level `_brand.yml`, so bslib's auto-discovery won't find it on its own) and serves the logo PNGs via `addResourcePath()` without copying them. See **Setup** below — this directory is empty until the submodule is initialized.
+- `web/` — a static Vite/Svelte port of this same comparison (no R/Shiny server at request time, deployable to GitHub Pages) — see `web/README.md` for details. Its GTFS sources mirror this app's: a Snapshot picker (`web/public/data/gtfs-snapshots/`, a committed copy of the same dated zips below), Upload, a best-effort feed URL (blocked by CORS for most real feeds, since there's no backend here to proxy around it), and a By-date picker resolved live via Mobility Database -- each visitor supplies their own free API token for that last one (stored only in their own browser), since a static site has nowhere safe to hold a shared one.
+  - `web/public/data/mobility-database-cache/` — **gitignored, not committed.** An optional local-only cache of every historical UTA snapshot Mobility Database has recorded (~1.1 GB across 177 unique captures as of last run -- far too large to commit), fetched via `web/scripts/fetch-mobility-database-snapshots.mjs` for anyone who wants to explore the full history offline. Requires a personal `MOBILITY_DATABASE_REFRESH_TOKEN`, same as the R app's own (see **Setup** below) -- the deployed app itself doesn't use or depend on this cache at all. De-dupes by content hash (SHA-256) rather than declared date range, since Mobility Database re-records identical feed content under new ids surprisingly often, and UTA can in principle update the live feed mid-service-period so two same-range entries could still genuinely differ. Re-running the script only downloads snapshot ids not already cached.
 - `gtfs-vs-tdm.qgz` — earlier QGIS project; superseded by the Shiny app above (kept for reference).
 
 Current GTFS snapshots: 2023-07-23, 2023-09-18, 2024-03-25, 2024-07-15, 2024-11-21, 2025-02-27.
+
+<details>
+<summary>Historical GTFS coverage available via Mobility Database (click to expand)</summary>
+
+![GTFS snapshot cache coverage](gtfs-snapshot-coverage.svg)
+
+Informational only -- reflects whatever a contributor last fetched locally via `fetch-mobility-database-snapshots.mjs` (see above), regenerated automatically at the end of that script by `web/scripts/generate-snapshot-coverage-chart.mjs`. Neither app depends on this data.
+
+</details>
 
 ## Setup
 

@@ -5,16 +5,17 @@
 
 import type { GtfsZipSize } from "../gtfs/inspect";
 
-export type GtfsSource = "upload" | "url" | "date";
+export type GtfsSource = "snapshot" | "url" | "date" | "upload";
 export type CompareMode = "overlay" | "swipe";
 export type ShowLayer = "lines" | "stops";
 
 class AppState {
   gtfsEnabled = $state(true);
   tdmEnabled = $state(true);
-  // Defaults to URL (pre-filled with UTA's own feed in Sidebar.svelte) --
-  // the common case is loading UTA's current feed, no file to pick.
-  gtfsSource = $state<GtfsSource>("url");
+  // Defaults to Snapshot, matching app.R -- the only source that always
+  // works with zero setup on a static site (same-origin static files, no
+  // CORS/token concerns at all, unlike URL/By date).
+  gtfsSource = $state<GtfsSource>("snapshot");
   gtfsDisplay = $state<Set<ShowLayer>>(new Set(["lines", "stops"]));
   tdmDisplay = $state<Set<ShowLayer>>(new Set(["lines", "stops"]));
 

@@ -1,13 +1,16 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { appState, type GtfsSource } from '../lib/store/appState.svelte'
   import {
     loadGtfsUpload,
     loadGtfsUrl,
     loadGtfsDate,
+    loadGtfsSnapshot,
     confirmLargeFeedLoad,
     cancelLargeFeedLoad,
   } from '../lib/store/gtfsLoader'
   import { getMobilityDatabaseToken, setMobilityDatabaseToken } from '../lib/storage/mobilityDatabaseToken'
+  import { listGtfsSnapshots, type GtfsSnapshotInfo } from '../lib/sources/snapshot'
   import { TDM_MODE_LABELS } from '../lib/tdm/modeLabels'
   import SegmentedControl from './SegmentedControl.svelte'
   import ChipGroup from './ChipGroup.svelte'
@@ -18,12 +21,15 @@
     { label: 'Stops', value: 'stops' as const },
   ]
   const gtfsSourceChoices: { label: string; value: GtfsSource }[] = [
+    { label: 'Snapshot', value: 'snapshot' },
     { label: 'URL', value: 'url' },
     { label: 'By date', value: 'date' },
     { label: 'Upload', value: 'upload' },
   ]
   const allTdmModes = Object.entries(TDM_MODE_LABELS).map(([value, label]) => ({ label, value }))
 
+  let snapshots = $state<GtfsSnapshotInfo[]>([])
+  let selectedSnapshotId = $state('')
   // Pre-filled with UTA's own live feed URL -- the common case is loading
   // UTA's current feed, not an arbitrary agency's (matches app.R's default).
   let urlInput = $state('https://gtfsfeed.rideuta.com/GTFS.zip')
@@ -31,9 +37,22 @@
   let tokenInput = $state(getMobilityDatabaseToken() ?? '')
   let showSettings = $state(false)
 
+  onMount(async () => {
+    snapshots = await listGtfsSnapshots()
+    if (snapshots.length === 0) return
+    selectedSnapshotId = snapshots[0].id // newest first, matches app.R's initial_date
+    // Eagerly load the default snapshot on first render, matching app.R's
+    // own initial_gtfs -- Snapshot is the only source that always works
+    // with zero setup, so there's no reason to start on an empty map.
+    if (appState.gtfsSource === 'snapshot') loadGtfsSnapshot(selectedSnapshotId)
+  })
+
   function onFileChange(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0]
     if (file) loadGtfsUpload(file)
+  }
+  function onSnapshotChange() {
+    if (selectedSnapshotId) loadGtfsSnapshot(selectedSnapshotId)
   }
   function onUrlLoad() {
     if (urlInput) loadGtfsUrl(urlInput)
@@ -69,7 +88,16 @@
       <SegmentedControl choices={gtfsSourceChoices} bind:value={appState.gtfsSource} />
     </div>
 
-    {#if appState.gtfsSource === 'url'}
+    {#if appState.gtfsSource === 'snapshot'}
+      <div class="sb-field">
+        <span class="field-label">Snapshot</span>
+        <select bind:value={selectedSnapshotId} onchange={onSnapshotChange}>
+          {#each snapshots as s (s.id)}
+            <option value={s.id}>{s.label}</option>
+          {/each}
+        </select>
+      </div>
+    {:else if appState.gtfsSource === 'url'}
       <div class="sb-field">
         <span class="field-label">Feed URL</span>
         <div class="row">

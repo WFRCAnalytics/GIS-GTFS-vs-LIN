@@ -2,6 +2,7 @@ import { appState } from "./appState.svelte";
 import { resolveGtfsZipFromUpload } from "../sources/upload";
 import { resolveGtfsZipFromUrl } from "../sources/url";
 import { resolveGtfsZipFromDate } from "../sources/mobilityDatabase";
+import { resolveGtfsZipFromSnapshot } from "../sources/snapshot";
 import { inspectGtfsZip } from "../gtfs/inspect";
 import { parseGtfsInWorker } from "../gtfs/parseInWorker";
 import type { GtfsLayers } from "../gtfs/build";
@@ -83,4 +84,8 @@ export function loadGtfsUrl(url: string) {
 
 export function loadGtfsDate(date: Date) {
   return withLoadHandling(() => resolveGtfsZipFromDate(date));
+}
+
+export function loadGtfsSnapshot(id: string) {
+  return withLoadHandling(() => resolveGtfsZipFromSnapshot(id));
 }

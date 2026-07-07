@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Fetched by scripts/fetch-mobility-database-snapshots.mjs, run locally --
+# never committed (needs a personal MOBILITY_DATABASE_REFRESH_TOKEN, and at
+# ~1.1 GB across every historical UTA snapshot it's far too large for this
+# repo). Regenerate locally if you need it; the "By date" GTFS source in the
+# app itself uses a live per-user token instead, not this cache.
+public/data/mobility-database-cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
