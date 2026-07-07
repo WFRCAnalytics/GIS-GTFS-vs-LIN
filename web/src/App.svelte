@@ -10,7 +10,14 @@
 
 <div class="app">
   <header>
-    <span class="title">TDM vs GTFS</span>
+    <span class="title">
+      <img
+        src="{import.meta.env.BASE_URL}brand/WFRC_logo_abbreviated_white_transparent.png"
+        height="28"
+        alt="WFRC logo"
+      />
+      TDM vs GTFS
+    </span>
     <button class="theme-toggle" onclick={() => (appState.darkMode = !appState.darkMode)}>
       {appState.darkMode ? '☀️ Light' : '🌙 Dark'}
     </button>
@@ -38,6 +45,9 @@
     flex: 0 0 auto;
   }
   .title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
     font-size: 1rem;
   }
