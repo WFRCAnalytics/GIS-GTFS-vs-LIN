@@ -379,8 +379,11 @@ default_tdm_year <- if ("2023" %in% all_tdm_years) "2023" else all_tdm_years[1]
 # "other" (anything parse_tdm_mode() couldn't classify) is deliberately left
 # out -- fixed order rather than unique(tdm_mode) so the "Line types" chips
 # always list highest-to-lowest capacity, regardless of which modes happen
-# to be present in a given gdb.
-all_tdm_modes <- intersect(c("rail", "brt", "core", "express", "local"), unique(tdm_routes_sf$tdm_mode))
+# to be present in a given gdb. Named so the selector displays proper-cased
+# labels (Rail/BRT/Core/Express/Local) while input$tdm_modes still receives
+# the lowercase values tdm_mode itself uses.
+tdm_mode_choices <- c("Rail" = "rail", "BRT" = "brt", "Core" = "core", "Express" = "express", "Local" = "local")
+all_tdm_modes <- tdm_mode_choices[tdm_mode_choices %in% unique(tdm_routes_sf$tdm_mode)]
 
 # A small uppercase field label (Source / Year / Show / ...). Deliberately a
 # neutral gray tier (see .field-label in www/custom.css), one step below the
@@ -669,8 +672,8 @@ ui <- page_navbar(
                      control = input_switch("gtfs_enabled", NULL, value = TRUE)),
       sb_field("Source",
         segmented_input("gtfs_source",
-                        choices = c("Snapshot" = "snapshot", "Upload" = "upload", "URL" = "url",
-                                    "By date" = "date"),
+                        choices = c("Snapshot" = "snapshot", "URL" = "url", "By date" = "date",
+                                    "Upload" = "upload"),
                         selected = "snapshot", label = "GTFS source")
       ),
       conditionalPanel(
@@ -678,16 +681,14 @@ ui <- page_navbar(
         sb_field("Snapshot",
           selectInput("gtfs_date", NULL, choices = snapshot_choices, selected = initial_date))
       ),
-      conditionalPanel(
-        "input.gtfs_source == 'upload'",
-        sb_field("GTFS zip file",
-          fileInput("gtfs_upload", NULL, accept = ".zip"))
-      ),
+      # Pre-filled with UTA's own live feed URL -- the common case is
+      # loading UTA's current feed, not an arbitrary agency's.
       conditionalPanel(
         "input.gtfs_source == 'url'",
         sb_field("Feed URL",
           div(
-            textInput("gtfs_url", NULL, placeholder = "https://.../gtfs.zip"),
+            textInput("gtfs_url", NULL, value = "https://gtfsfeed.rideuta.com/GTFS.zip",
+                      placeholder = "https://.../gtfs.zip"),
             actionButton("gtfs_url_load", "Load feed", class = "btn-sm btn-outline-primary")
           ))
       ),
@@ -702,6 +703,11 @@ ui <- page_navbar(
                       format = "M d, yyyy", width = "100%"),
             actionButton("gtfs_date_load", "Find feed", class = "btn-sm btn-outline-primary")
           ))
+      ),
+      conditionalPanel(
+        "input.gtfs_source == 'upload'",
+        sb_field("GTFS zip file",
+          fileInput("gtfs_upload", NULL, accept = ".zip"))
       ),
       sb_field("Show",
         chip_group_input("gtfs_display", choices = lines_stops_choices, selected = c("lines", "stops"),
@@ -718,7 +724,7 @@ ui <- page_navbar(
       section_header("map", "TDM", section_tint$`wc-light-rail`,
                      control = input_switch("tdm_enabled", NULL, value = TRUE)),
       div(class = "sb-field-row",
-        sb_field("Year",
+        sb_field("Scenario",
           selectInput("tdm_year", NULL, choices = all_tdm_years, selected = default_tdm_year)),
         sb_field("Line types",
           selectInput("tdm_modes", NULL, choices = all_tdm_modes,
@@ -830,8 +836,9 @@ server <- function(input, output, session) {
     tdm_part <- if (!isTRUE(input$tdm_enabled)) {
       "Off"
     } else {
+      mode_labels <- names(tdm_mode_choices)[match(input$tdm_modes %||% character(0), tdm_mode_choices)]
       paste0(input$tdm_year %||% "",
-             " (", paste(input$tdm_modes %||% character(0), collapse = ", "), ")")
+             " (", paste(mode_labels, collapse = ", "), ")")
     }
     span(
       status_dot(section_tint$`wfrc-secondary-blue`, isTRUE(input$gtfs_enabled)),
