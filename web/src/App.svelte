@@ -1,6 +1,7 @@
 <script lang="ts">
   import MapView from './lib/map/MapView.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import DarkModeToggle from './components/DarkModeToggle.svelte'
   import { appState } from './lib/store/appState.svelte'
 
   $effect(() => {
@@ -18,9 +19,7 @@
       />
       TDM vs GTFS
     </span>
-    <button class="theme-toggle" onclick={() => (appState.darkMode = !appState.darkMode)}>
-      {appState.darkMode ? '☀️ Light' : '🌙 Dark'}
-    </button>
+    <DarkModeToggle bind:checked={appState.darkMode} />
   </header>
   <div class="body">
     <Sidebar />
@@ -50,15 +49,6 @@
     gap: 0.5rem;
     font-weight: 700;
     font-size: 1rem;
-  }
-  .theme-toggle {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    color: white;
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
-    cursor: pointer;
   }
   .body {
     flex: 1;
