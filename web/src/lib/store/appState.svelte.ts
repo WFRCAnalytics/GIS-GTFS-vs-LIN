@@ -46,6 +46,23 @@ class AppState {
   // decouples the two without prop drilling.
   gtfsRoutesData = $state<GeoJSON.FeatureCollection | null>(null);
   gtfsStopsData = $state<GeoJSON.FeatureCollection | null>(null);
+
+  // Set once by MapView.svelte on mount (static data, loaded once) -- kept
+  // here rather than as a local MapView variable so DetailPanel.svelte can
+  // also resolve a clicked TDM stop's serving route without prop drilling.
+  tdmRoutesData = $state<GeoJSON.FeatureCollection | null>(null);
+  tdmStopsData = $state<GeoJSON.FeatureCollection | null>(null);
+
+  // Set by clickDetail.ts when a route/stop feature is clicked on the map;
+  // null when nothing is selected. DetailPanel.svelte renders based on
+  // this -- see its own file for the per-type property shapes.
+  selectedFeature = $state<SelectedFeature | null>(null);
 }
+
+export type SelectedFeature =
+  | { kind: "gtfs-route"; properties: Record<string, unknown> }
+  | { kind: "gtfs-stop"; properties: Record<string, unknown> }
+  | { kind: "tdm-route"; properties: Record<string, unknown> }
+  | { kind: "tdm-stop"; properties: Record<string, unknown> };
 
 export const appState = new AppState();

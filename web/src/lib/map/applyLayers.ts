@@ -8,6 +8,7 @@ import {
   setTdmRouteFilter,
 } from "./layers";
 import { addHoverTooltip } from "./tooltip";
+import { addClickDetail } from "./clickDetail";
 import { appState } from "../store/appState.svelte";
 
 export interface MapLayerData {
@@ -40,6 +41,8 @@ export function applyLayers(map: MapLibreMap, which: "tdm" | "gtfs" | "both", da
     addClusteredStopLayer(map, "tdm_stops", filteredStops, "tdm_color", "#333333", stopsVisible);
     setTdmRouteFilter(map, appState.tdmYear, [...appState.tdmModes]);
     addHoverTooltip(map, "tdm_routes", "NAME");
+    addClickDetail(map, "tdm_routes", "tdm-route");
+    addClickDetail(map, "tdm_stops", "tdm-stop");
   }
 
   if ((which === "gtfs" || which === "both") && appState.gtfsRoutesData && appState.gtfsStopsData) {
@@ -54,6 +57,8 @@ export function applyLayers(map: MapLibreMap, which: "tdm" | "gtfs" | "both", da
     addGtfsRouteLayer(map, appState.gtfsRoutesData, linesVisible);
     addClusteredStopLayer(map, "gtfs_stops", appState.gtfsStopsData, "stop_color", "#3E7C8B", stopsVisible);
     addHoverTooltip(map, "gtfs_routes", "route_short_name");
+    addClickDetail(map, "gtfs_routes", "gtfs-route");
+    addClickDetail(map, "gtfs_stops", "gtfs-stop");
   }
 }
 

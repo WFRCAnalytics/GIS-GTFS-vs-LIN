@@ -8,6 +8,7 @@
   import { applyLayers, applyVisibility, type MapLayerData } from './applyLayers'
   import { appState } from '../store/appState.svelte'
   import ValidityBadge from '../../components/ValidityBadge.svelte'
+  import DetailPanel from '../../components/DetailPanel.svelte'
 
   let overlayContainer: HTMLDivElement
   let gtfsContainer: HTMLDivElement
@@ -22,7 +23,10 @@
   let overlayReady = $state(false)
   let swipeReady = $state(false)
 
-  let tdmData: MapLayerData = { tdmRoutes: null, tdmStops: null }
+  // Mirrors appState.tdmRoutesData/tdmStopsData into the shape applyLayers()
+  // expects -- the state itself lives in appState (set once below) so
+  // DetailPanel.svelte can also resolve a clicked TDM stop's serving route.
+  let tdmData: MapLayerData = $derived({ tdmRoutes: appState.tdmRoutesData, tdmStops: appState.tdmStopsData })
 
   onMount(() => {
     overlayMap = createMap(overlayContainer, appState.darkMode)
@@ -32,7 +36,8 @@
         fetch(`${import.meta.env.BASE_URL}data/tdm-routes.geojson`),
         fetch(`${import.meta.env.BASE_URL}data/tdm-stops.geojson`),
       ])
-      tdmData = { tdmRoutes: await routesRes.json(), tdmStops: await stopsRes.json() }
+      appState.tdmRoutesData = await routesRes.json()
+      appState.tdmStopsData = await stopsRes.json()
       applyLayers(overlayMap!, 'both', tdmData)
     })
   })
@@ -120,6 +125,7 @@
     <div class="compare-half" bind:this={tdmContainer}></div>
   </div>
   <ValidityBadge />
+  <DetailPanel />
 </div>
 
 <style>
