@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appState } from '../lib/store/appState.svelte'
   import { routeTypeLabel } from '../lib/gtfs/routeTypeLabels'
+  import { wheelchairBoardingLabel, locationTypeLabel } from '../lib/gtfs/stopFieldLabels'
   import { tdmModeLabel } from '../lib/tdm/modeLabels'
 
   const HEADWAY_FIELDS = ['HEADWAY_1', 'HEADWAY_2', 'HEADWAY_3', 'HEADWAY_4', 'HEADWAY_5']
@@ -63,13 +64,42 @@
       <div class="swatch" style="background: {selected.properties.route_color}"></div>
       <h3>{selected.properties.route_short_name || selected.properties.route_id}</h3>
       {#if selected.properties.route_long_name}<p class="subtitle">{selected.properties.route_long_name}</p>{/if}
+      {#if selected.properties.route_desc}<p class="hint">{selected.properties.route_desc}</p>{/if}
       <dl>
         <dt>Type</dt>
         <dd>{routeTypeLabel(selected.properties.route_type)}</dd>
+        {#if selected.properties.agency_name}
+          <dt>Agency</dt>
+          <dd>{selected.properties.agency_name}</dd>
+        {/if}
+        <dt>Trips</dt>
+        <dd>{selected.properties.trip_count}</dd>
+        <dt>Stops served</dt>
+        <dd>{selected.properties.stop_count}</dd>
       </dl>
+      {#if selected.properties.route_url}
+        <a class="ext-link" href={String(selected.properties.route_url)} target="_blank" rel="noreferrer">Route website ↗</a>
+      {/if}
     {:else if selected.kind === 'gtfs-stop'}
       <div class="swatch" style="background: {selected.properties.stop_color}"></div>
       <h3>{selected.properties.stop_name || selected.properties.stop_id}</h3>
+      {#if selected.properties.stop_desc}<p class="subtitle">{selected.properties.stop_desc}</p>{/if}
+      <dl>
+        {#if selected.properties.stop_code}
+          <dt>Code</dt>
+          <dd>{selected.properties.stop_code}</dd>
+        {/if}
+        <dt>Type</dt>
+        <dd>{locationTypeLabel(selected.properties.location_type)}</dd>
+        {#if wheelchairBoardingLabel(selected.properties.wheelchair_boarding)}
+          <dt>Wheelchair</dt>
+          <dd>{wheelchairBoardingLabel(selected.properties.wheelchair_boarding)}</dd>
+        {/if}
+        {#if selected.properties.parent_station}
+          <dt>Station</dt>
+          <dd>{selected.properties.parent_station}</dd>
+        {/if}
+      </dl>
       {#if gtfsServingRoutes.length > 0}
         <span class="field-label">Served by</span>
         <div class="chips">
@@ -213,6 +243,13 @@
     font-size: 11px;
     color: var(--label);
     margin: 0 0 10px;
+  }
+  .ext-link {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--wfrc-secondary-blue);
+    text-decoration: underline;
+    margin-bottom: 10px;
   }
   .headway-chart {
     display: flex;
